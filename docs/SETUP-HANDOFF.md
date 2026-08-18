@@ -6,8 +6,6 @@ This setup uses stock Zed as the ACP client, the private `pied-acp` adapter, and
 Zed → pied-acp (ACP ↔ Pi RPC adapter) → Pi → selected model
 ```
 
-No Zed fork or OMP installation is part of this workflow.
-
 ## Required tools
 
 | Tool | Purpose | Link |
@@ -89,7 +87,6 @@ Key skills used most often:
 | `@ogulcancelik/pi-session-recall` | Search and query previous Pi sessions | [npm](https://www.npmjs.com/package/@ogulcancelik/pi-session-recall) · [source](https://github.com/ogulcancelik/pi-extensions/tree/main/packages/pi-session-recall) |
 | `kylehumphrey-ao/skills` | Private custom skills, currently including `stubble` | [private repository](https://github.com/kylehumphrey-ao/skills) |
 | ripgrep | Fast backend for session recall | [source](https://github.com/BurntSushi/ripgrep) |
-| Herdr | Optional terminal-only agent state reporting; it does not affect ACP/Zed sessions | [herdr.dev](https://herdr.dev) |
 
 ```sh
 pi install npm:@tavily/pi-extension
@@ -106,8 +103,6 @@ pi install npm:@ogulcancelik/pi-session-recall
 ```sh
 pi install git:git@github.com:kylehumphrey-ao/skills
 ```
-
-Do not transfer the disabled `auto-model-router.ts` or `quick-yes.ts`; they are not part of the workflow. The current Pi settings also contain a stale `pi-mcp-adapter` path whose file no longer exists; omit it.
 
 ## Pi configuration
 
@@ -166,7 +161,7 @@ Each developer must authenticate independently. Never copy `~/.pi/agent/auth.jso
 
 ## Stock Zed configuration
 
-No Zed extension is required. Use stock Zed and add this to `~/.config/zed/settings.json`, replacing the adapter path:
+Add this to stock Zed's `~/.config/zed/settings.json`, replacing the adapter path:
 
 ```json
 {
@@ -186,7 +181,7 @@ No Zed extension is required. Use stock Zed and add this to `~/.config/zed/setti
 }
 ```
 
-Open a new `pied-acp` thread after rebuilding the adapter or changing roles. Zed's installed icon themes and language extensions are personal preferences and are not required for this workflow.
+Open a new `pied-acp` thread after rebuilding the adapter or changing roles.
 
 ## What the pied-acp fork adds
 
@@ -230,4 +225,4 @@ npm run lint
 npm run build
 ```
 
-The fork is private and therefore cannot be installed from the public ACP Registry. Zed must launch its built `dist/index.js` as a custom agent unless the package is later published publicly and submitted to the [ACP Registry](https://github.com/agentclientprotocol/registry).
+Zed launches the adapter's built `dist/index.js` as a custom agent.
