@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import registerPiAcpTree from '../../src/pi-extension/tree.js'
+import registerMagPiAcpTree from '../../src/pi-extension/tree.js'
 import {
-  PI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
-  PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
-  PI_ACP_TREE_COMMAND
+  MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
+  MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
+  MAGPI_ACP_TREE_COMMAND
 } from '../../src/pi-rpc/tree-command.js'
 
 type RegisteredCommand = {
@@ -14,7 +14,7 @@ type RegisteredCommand = {
 function loadTreeCommand(): RegisteredCommand {
   const registeredCommands = new Map<string, RegisteredCommand>()
 
-  registerPiAcpTree({
+  registerMagPiAcpTree({
     registerCommand(name, command) {
       registeredCommands.set(name, command)
     },
@@ -22,7 +22,7 @@ function loadTreeCommand(): RegisteredCommand {
     appendEntry() {}
   })
 
-  const registeredCommand = registeredCommands.get(PI_ACP_TREE_COMMAND)
+  const registeredCommand = registeredCommands.get(MAGPI_ACP_TREE_COMMAND)
   assert.ok(registeredCommand)
   return registeredCommand
 }
@@ -32,7 +32,7 @@ test('Pi tree extension maps a Zed message ID and rewinds with native tree navig
   let turnStart: ((event: unknown, context: any) => void | Promise<void>) | undefined
   const customEntries: Array<{ customType: string; data: unknown }> = []
 
-  registerPiAcpTree({
+  registerMagPiAcpTree({
     registerCommand(name, command) {
       commands.set(name, command)
     },
@@ -44,8 +44,8 @@ test('Pi tree extension maps a Zed message ID and rewinds with native tree navig
     }
   })
 
-  const mark = commands.get(PI_ACP_MARK_CLIENT_MESSAGE_COMMAND)
-  const rewind = commands.get(PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND)
+  const mark = commands.get(MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND)
+  const rewind = commands.get(MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND)
   assert.ok(mark)
   assert.ok(rewind)
   assert.ok(turnStart)
@@ -55,7 +55,7 @@ test('Pi tree extension maps a Zed message ID and rewinds with native tree navig
 
   assert.deepEqual(customEntries, [
     {
-      customType: 'pi-acp-client-message',
+      customType: 'magpi-acp-client-message',
       data: { clientMessageId: 'zed-message-1', userEntryId: 'pi-user-1' }
     }
   ])
@@ -69,7 +69,7 @@ test('Pi tree extension maps a Zed message ID and rewinds with native tree navig
           id: 'mapping-1',
           parentId: 'pi-user-1',
           type: 'custom',
-          customType: 'pi-acp-client-message',
+          customType: 'magpi-acp-client-message',
           data: { clientMessageId: 'zed-message-1', userEntryId: 'pi-user-1' }
         }
       ],

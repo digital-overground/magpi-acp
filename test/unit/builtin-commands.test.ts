@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpAgent, generateThreadTitle } from '../../src/acp/agent.js'
-import { PI_ACP_TREE_COMMAND, PI_ACP_TREE_REWIND_METHOD } from '../../src/pi-rpc/tree-command.js'
+import { MagPiAcpAgent, generateThreadTitle } from '../../src/acp/agent.js'
+import { MAGPI_ACP_TREE_COMMAND, MAGPI_ACP_TREE_REWIND_METHOD } from '../../src/pi-rpc/tree-command.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -17,12 +17,12 @@ class FakeSessions {
   }
 }
 
-test('PiAcpAgent: /steering is handled adapter-side', async () => {
+test('MagPiAcpAgent: /steering is handled adapter-side', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess() as any
   proc.getState = async () => ({ steeringMode: 'one-at-a-time' })
 
-  const agent = new PiAcpAgent(asAgentConn(conn))
+  const agent = new MagPiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
 
   const res = await agent.prompt({
@@ -36,7 +36,7 @@ test('PiAcpAgent: /steering is handled adapter-side', async () => {
   assert.match((last as any).update.content.text, /Steering mode: one-at-a-time/)
 })
 
-test('PiAcpAgent: /name sets session display name adapter-side', async () => {
+test('MagPiAcpAgent: /name sets session display name adapter-side', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess() as any
 
@@ -45,7 +45,7 @@ test('PiAcpAgent: /name sets session display name adapter-side', async () => {
     setTo = name
   }
 
-  const agent = new PiAcpAgent(asAgentConn(conn))
+  const agent = new MagPiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
 
   const res = await agent.prompt({
@@ -63,7 +63,7 @@ test('PiAcpAgent: /name sets session display name adapter-side', async () => {
   assert.match((last as any).update.content.text, /Session name set: My Session/)
 })
 
-test('PiAcpAgent: automatically names a thread from its first user message', async () => {
+test('MagPiAcpAgent: automatically names a thread from its first user message', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess() as any
   let sessionName: string | undefined
@@ -96,7 +96,7 @@ test('PiAcpAgent: automatically names a thread from its first user message', asy
     },
     wasCancelRequested: () => false
   }
-  const agent = new PiAcpAgent(asAgentConn(conn))
+  const agent = new MagPiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = new FakeSessions(session) as any
   ;(agent as any).generateTitle = async (request: any) => {
     sequence.push('generate')
@@ -120,15 +120,15 @@ test('PiAcpAgent: automatically names a thread from its first user message', asy
 })
 
 test('generateThreadTitle closes stdin so Pi can process the prompt', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pied-title-'))
+  const dir = mkdtempSync(join(tmpdir(), 'magpi-title-'))
   const command = join(dir, 'fake-pi')
-  const previousCommand = process.env.PI_ACP_PI_COMMAND
+  const previousCommand = process.env.MAGPI_ACP_PI_COMMAND
   writeFileSync(
     command,
     '#!/usr/bin/env node\nprocess.stdin.resume()\nprocess.stdin.on("end", () => console.log("One Two Three Four Five Six Seven"))\n'
   )
   chmodSync(command, 0o755)
-  process.env.PI_ACP_PI_COMMAND = command
+  process.env.MAGPI_ACP_PI_COMMAND = command
 
   try {
     assert.equal(
@@ -136,18 +136,18 @@ test('generateThreadTitle closes stdin so Pi can process the prompt', async () =
       'One Two Three Four Five Six'
     )
   } finally {
-    if (previousCommand === undefined) delete process.env.PI_ACP_PI_COMMAND
-    else process.env.PI_ACP_PI_COMMAND = previousCommand
+    if (previousCommand === undefined) delete process.env.MAGPI_ACP_PI_COMMAND
+    else process.env.MAGPI_ACP_PI_COMMAND = previousCommand
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('PiAcpAgent: /tree invokes the bundled Pi tree command adapter-side', async () => {
+test('MagPiAcpAgent: /tree invokes the bundled Pi tree command adapter-side', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess() as any
-  proc.commands = { commands: [{ name: PI_ACP_TREE_COMMAND }] }
+  proc.commands = { commands: [{ name: MAGPI_ACP_TREE_COMMAND }] }
 
-  const agent = new PiAcpAgent(asAgentConn(conn))
+  const agent = new MagPiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
 
   const res = await agent.prompt({
@@ -156,14 +156,14 @@ test('PiAcpAgent: /tree invokes the bundled Pi tree command adapter-side', async
   } as any)
 
   assert.equal(res.stopReason, 'end_turn')
-  assert.deepEqual(proc.prompts, [{ message: `/${PI_ACP_TREE_COMMAND}`, attachments: [] }])
+  assert.deepEqual(proc.prompts, [{ message: `/${MAGPI_ACP_TREE_COMMAND}`, attachments: [] }])
 })
 
-test('PiAcpAgent: /tree does not send an unloaded internal command to the model', async () => {
+test('MagPiAcpAgent: /tree does not send an unloaded internal command to the model', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess() as any
 
-  const agent = new PiAcpAgent(asAgentConn(conn))
+  const agent = new MagPiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
 
   const res = await agent.prompt({
@@ -176,13 +176,13 @@ test('PiAcpAgent: /tree does not send an unloaded internal command to the model'
   assert.match((conn.updates.at(-1) as any).update.content.text, /tree extension did not load/i)
 })
 
-test('PiAcpAgent: tree rewind extension method delegates to Pi', async () => {
+test('MagPiAcpAgent: tree rewind extension method delegates to Pi', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
-  const agent = new PiAcpAgent(asAgentConn(conn))
+  const agent = new MagPiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
 
-  const response = await agent.extMethod(PI_ACP_TREE_REWIND_METHOD, {
+  const response = await agent.extMethod(MAGPI_ACP_TREE_REWIND_METHOD, {
     sessionId: 's1',
     clientMessageId: 'zed-message-1'
   })

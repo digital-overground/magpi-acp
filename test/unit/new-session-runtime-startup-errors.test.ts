@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { SessionStore } from '../../src/acp/session-store.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 
@@ -21,9 +21,9 @@ class FakeSessions {
   }
 }
 
-test('PiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth error after spawn', async () => {
+test('MagPiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth error after spawn', async () => {
   const conn = new FakeAgentSideConnection()
-  const root = mkdtempSync(join(tmpdir(), 'pi-acp-runtime-auth-'))
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-runtime-auth-'))
   const sessionFile = join(root, 'sessions', 'failed.jsonl')
   const sessionMapPath = join(root, 'session-map.json')
 
@@ -56,7 +56,7 @@ test('PiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth error
   const sessions = new FakeSessions(session)
   const store = new SessionStore(sessionMapPath)
   store.upsert({ sessionId: 's-auth', cwd: process.cwd(), sessionFile })
-  const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = sessions as any
   ;(agent as any).store = store as any
 
@@ -70,7 +70,7 @@ test('PiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth error
   assert.equal(store.get('s-auth'), null)
 })
 
-test('PiAcpAgent: newSession returns Internal error on non-auth model probe failures after spawn', async () => {
+test('MagPiAcpAgent: newSession returns Internal error on non-auth model probe failures after spawn', async () => {
   const conn = new FakeAgentSideConnection()
 
   const session = {
@@ -87,7 +87,7 @@ test('PiAcpAgent: newSession returns Internal error on non-auth model probe fail
   }
 
   const sessions = new FakeSessions(session)
-  const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = sessions as any
 
   await assert.rejects(

@@ -1,23 +1,23 @@
-# Pied workflow handoff
+# MagPi workflow handoff
 
-This setup uses stock Zed as the ACP client, the private `pied-acp` adapter, and Pi as the agent runtime.
+This setup uses stock Zed as the ACP client, the private `magpi-acp` adapter, and Pi as the agent runtime.
 
 ```text
-Zed → pied-acp (ACP ↔ Pi RPC adapter) → Pi → selected model
+Zed → magpi-acp (ACP ↔ Pi RPC adapter) → Pi → selected model
 ```
 
 ## Required tools
 
-| Tool | Purpose | Link |
-| --- | --- | --- |
-| Zed | Editor and ACP client | [zed.dev/download](https://zed.dev/download) · [External Agents docs](https://zed.dev/docs/ai/external-agents) |
-| Pi | Coding-agent runtime | [GitHub](https://github.com/earendil-works/pi-mono) · [npm](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) · [pi.dev](https://pi.dev) |
-| pied-acp | Customized ACP adapter | [kylehumphrey-ao/pied-acp](https://github.com/kylehumphrey-ao/pied-acp) (private; collaborator access required) |
-| ACP | Protocol used between Zed and the adapter | [agentclientprotocol.com](https://agentclientprotocol.com) |
-| Homebrew | Installs the macOS toolchain | [brew.sh](https://brew.sh) |
-| Node.js 22+ | Runs Pi and pied-acp | [nodejs.org](https://nodejs.org) |
-| Git | Clones the private adapter and Git-based Pi packages | [git-scm.com](https://git-scm.com) |
-| GitHub CLI | Authenticates and clones private GitHub repositories | [cli.github.com](https://cli.github.com) |
+| Tool        | Purpose                                              | Link                                                                                                                                                  |
+| ----------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Zed         | Editor and ACP client                                | [zed.dev/download](https://zed.dev/download) · [External Agents docs](https://zed.dev/docs/ai/external-agents)                                        |
+| Pi          | Coding-agent runtime                                 | [GitHub](https://github.com/earendil-works/pi-mono) · [npm](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) · [pi.dev](https://pi.dev) |
+| magpi-acp   | Customized ACP adapter                               | [kylehumphrey-ao/magpi-acp](https://github.com/kylehumphrey-ao/magpi-acp) (private; collaborator access required)                                     |
+| ACP         | Protocol used between Zed and the adapter            | [agentclientprotocol.com](https://agentclientprotocol.com)                                                                                            |
+| Homebrew    | Installs the macOS toolchain                         | [brew.sh](https://brew.sh)                                                                                                                            |
+| Node.js 22+ | Runs Pi and magpi-acp                                | [nodejs.org](https://nodejs.org)                                                                                                                      |
+| Git         | Clones the private adapter and Git-based Pi packages | [git-scm.com](https://git-scm.com)                                                                                                                    |
+| GitHub CLI  | Authenticates and clones private GitHub repositories | [cli.github.com](https://cli.github.com)                                                                                                              |
 
 Versions at handoff: Zed 1.15.0, Pi 0.84.2, Node 26.6.0, npm 12.0.2.
 
@@ -43,21 +43,21 @@ brew install --cask zed
 gh auth login
 ```
 
-### Pi and pied-acp
+### Pi and magpi-acp
 
 ```sh
 npm install -g @earendil-works/pi-coding-agent
 ```
 
 ```sh
-git clone git@github.com:kylehumphrey-ao/pied-acp.git
+git clone git@github.com:kylehumphrey-ao/magpi-acp.git
 ```
 
 ```sh
-cd pied-acp && npm ci && npm test && npm run build
+cd magpi-acp && npm ci && npm test && npm run build
 ```
 
-The private repository's `main` branch contains the pied changes at commit `b57a8e4`. It is based on upstream [`svkozak/pi-acp`](https://github.com/svkozak/pi-acp) 0.0.31; add that repository as `upstream` before syncing newer releases.
+MagPi ACP is independently versioned from upstream [`svkozak/pi-acp`](https://github.com/svkozak/pi-acp), currently based on upstream version 0.0.31. Add that repository as `upstream` before syncing newer releases.
 
 ```sh
 git remote add upstream https://github.com/svkozak/pi-acp.git
@@ -67,12 +67,12 @@ git remote add upstream https://github.com/svkozak/pi-acp.git
 
 ### Required for the workflow
 
-| Package | What it provides | Link |
-| --- | --- | --- |
-| `@juicesharp/rpiv-todo` | Persistent `todo` tool; pied-acp translates its state into Zed's native plan card | [npm](https://www.npmjs.com/package/@juicesharp/rpiv-todo) · [source](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) |
-| `pi-ask-user` | Structured decision prompts; pied-acp maps them to Zed ACP elicitation | [npm](https://www.npmjs.com/package/pi-ask-user) · [source](https://github.com/edlsh/pi-ask-user) |
-| Ponytail | Minimal/YAGNI implementation and review skills; also requires tracing the real code path before editing | [source](https://github.com/DietrichGebert/ponytail) |
-| Matt Pocock skills | `grill-me`, debugging, code review, research, TDD, handoff, and related workflow skills | [source](https://github.com/mattpocock/skills) |
+| Package                 | What it provides                                                                                        | Link                                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@juicesharp/rpiv-todo` | Persistent `todo` tool; magpi-acp translates its state into Zed's native plan card                      | [npm](https://www.npmjs.com/package/@juicesharp/rpiv-todo) · [source](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) |
+| `pi-ask-user`           | Structured decision prompts; magpi-acp maps them to Zed ACP elicitation                                 | [npm](https://www.npmjs.com/package/pi-ask-user) · [source](https://github.com/edlsh/pi-ask-user)                                           |
+| Ponytail                | Minimal/YAGNI implementation and review skills; also requires tracing the real code path before editing | [source](https://github.com/DietrichGebert/ponytail)                                                                                        |
+| Matt Pocock skills      | `grill-me`, debugging, code review, research, TDD, handoff, and related workflow skills                 | [source](https://github.com/mattpocock/skills)                                                                                              |
 
 ```sh
 pi install npm:@juicesharp/rpiv-todo
@@ -102,8 +102,8 @@ Key skills used most often:
 
 ### Web integration
 
-| Package | Use | Link |
-| --- | --- | --- |
+| Package                | Use                                                     | Link                                                                                     |
+| ---------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `@tavily/pi-extension` | `web_search` and `web_fetch`; requires `TAVILY_API_KEY` | [npm](https://www.npmjs.com/package/@tavily/pi-extension) · [Tavily](https://tavily.com) |
 
 ```sh
@@ -159,7 +159,7 @@ Each developer must authenticate independently. Never copy `~/.pi/agent/auth.jso
 
 - Configure the OpenAI Codex provider through Pi's authentication flow.
 - Set `TAVILY_API_KEY` in the environment that launches Zed/Pi if using Tavily.
-- Grant the developer access to the private `pied-acp` repository.
+- Grant the developer access to the private `magpi-acp` repository.
 
 ## Stock Zed configuration
 
@@ -168,10 +168,10 @@ Add this to stock Zed's `~/.config/zed/settings.json`, replacing the adapter pat
 ```json
 {
   "agent_servers": {
-    "pied-acp": {
+    "magpi-acp": {
       "type": "custom",
       "command": "node",
-      "args": ["/absolute/path/to/pied-acp/dist/index.js"],
+      "args": ["/absolute/path/to/magpi-acp/dist/index.js"],
       "env": {},
       "default_config_options": {
         "role": "Build",
@@ -183,9 +183,9 @@ Add this to stock Zed's `~/.config/zed/settings.json`, replacing the adapter pat
 }
 ```
 
-Open a new `pied-acp` thread after rebuilding the adapter or changing roles.
+Open a new `magpi-acp` thread after rebuilding the adapter or changing roles.
 
-## What the pied-acp fork adds
+## What the magpi-acp fork adds
 
 - Native ACP model and thinking selectors.
 - A combined role selector ordered left-to-right as Role, Model, Thinking.
@@ -200,7 +200,7 @@ Open a new `pied-acp` thread after rebuilding the adapter or changing roles.
 
 ## Working workflow
 
-1. Start a stock Zed `pied-acp` thread.
+1. Start a stock Zed `magpi-acp` thread.
 2. Choose `Plan`, `Build`, or `Fast`; use `shift-tab` to cycle roles.
 3. For unclear work, invoke `grill-me` before implementation.
 4. Ask Pi to explore the repository and trace the relevant flow before editing.
@@ -209,7 +209,7 @@ Open a new `pied-acp` thread after rebuilding the adapter or changing roles.
 7. Use `/name` only when overriding the automatic title.
 8. Run the repository's tests/typecheck/build before handoff.
 
-## Maintaining pied-acp
+## Maintaining magpi-acp
 
 ```sh
 npm test

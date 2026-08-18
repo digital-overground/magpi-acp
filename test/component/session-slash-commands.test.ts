@@ -1,13 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpSession } from '../../src/acp/session.js'
+import { MagPiAcpSession } from '../../src/acp/session.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
 
-test('PiAcpSession: expands /command before sending to pi', async () => {
+test('MagPiAcpSession: expands /command before sending to pi', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],

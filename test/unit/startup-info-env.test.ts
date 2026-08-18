@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 
 class FakeSessions {
@@ -10,14 +10,14 @@ class FakeSessions {
   }
 }
 
-test('PiAcpAgent: quietStartup=true disables startup info generation/emission', async () => {
+test('MagPiAcpAgent: quietStartup=true disables startup info generation/emission', async () => {
   const prevAgentDir = process.env.PI_CODING_AGENT_DIR
 
   // Force quietStartup in pi settings by pointing PI_CODING_AGENT_DIR at a temp dir.
   const { mkdtempSync, writeFileSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
-  const dir = mkdtempSync(join(tmpdir(), 'pi-acp-quietstartup-'))
+  const dir = mkdtempSync(join(tmpdir(), 'magpi-acp-quietstartup-'))
   writeFileSync(join(dir, 'settings.json'), JSON.stringify({ quietStartup: true }, null, 2), 'utf-8')
   process.env.PI_CODING_AGENT_DIR = dir
 
@@ -55,12 +55,12 @@ test('PiAcpAgent: quietStartup=true disables startup info generation/emission', 
       }
     }
 
-    const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
     ;(agent as any).sessions = new FakeSessions(session) as any
 
     const res = await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
 
-    const startupInfo = res?._meta?.piAcp?.startupInfo ?? null
+    const startupInfo = res?._meta?.magPiAcp?.startupInfo ?? null
 
     // When quietStartup=true the full prelude is suppressed. However, an update notice
     // (if one exists) is still surfaced because it's high-signal and actionable.

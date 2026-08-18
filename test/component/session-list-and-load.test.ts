@@ -4,15 +4,15 @@ import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 
 // We mock PiRpcProcess.spawn so loadSession doesn't actually spawn `pi`.
 import { PiRpcProcess } from '../../src/pi-rpc/process.js'
 
-test('PiAcpAgent: listSessions lists pi sessions and loadSession replays history', async () => {
+test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays history', async () => {
   // Create a fake PI_CODING_AGENT_DIR with one session.
-  const root = mkdtempSync(join(tmpdir(), 'pi-acp-test-'))
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-test-'))
   const sessionsDir = join(root, 'sessions', '--tmp--project--')
   const sessionFile = join(sessionsDir, '0000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jsonl')
 
@@ -59,7 +59,7 @@ test('PiAcpAgent: listSessions lists pi sessions and loadSession replays history
 
   try {
     const conn = new FakeAgentSideConnection()
-    const agent = new PiAcpAgent(asAgentConn(conn))
+    const agent = new MagPiAcpAgent(asAgentConn(conn))
 
     // 1) list sessions
     const listed = await agent.listSessions({ cwd: null, cursor: null, _meta: null } as any)

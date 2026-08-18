@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -26,7 +26,7 @@ class FakeSessions {
   }
 }
 
-test('PiAcpAgent: newSession returns configOptions for model and thinking selectors', async () => {
+test('MagPiAcpAgent: newSession returns configOptions for model and thinking selectors', async () => {
   const realSetTimeout = globalThis.setTimeout
   ;(globalThis as any).setTimeout = () => 0 as any
 
@@ -55,50 +55,53 @@ test('PiAcpAgent: newSession returns configOptions for model and thinking select
       sendStartupInfoIfPending() {}
     }
 
-    const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
     ;(agent as any).sessions = new FakeSessions(session) as any
 
     const result = await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
 
     assert.equal(result.models?.currentModelId, 'test/beta')
     assert.equal(result.modes?.currentModeId, 'high')
-    assert.deepEqual(result.configOptions.filter(option => option.id !== 'role'), [
-      {
-        type: 'select',
-        id: 'model',
-        category: 'model',
-        name: 'Model',
-        description: 'Select the model for this session',
-        currentValue: 'test/beta',
-        options: [
-          { value: 'test/alpha', name: 'test/Alpha', description: null },
-          { value: 'test/beta', name: 'test/Beta', description: null }
-        ]
-      },
-      {
-        type: 'select',
-        id: 'thought_level',
-        category: 'thought_level',
-        name: 'Thinking',
-        description: 'Set the reasoning effort for this session',
-        currentValue: 'high',
-        options: [
-          { value: 'off', name: 'Thinking: off', description: null },
-          { value: 'minimal', name: 'Thinking: minimal', description: null },
-          { value: 'low', name: 'Thinking: low', description: null },
-          { value: 'medium', name: 'Thinking: medium', description: null },
-          { value: 'high', name: 'Thinking: high', description: null },
-          { value: 'xhigh', name: 'Thinking: xhigh', description: null },
-          { value: 'max', name: 'Thinking: max', description: null }
-        ]
-      }
-    ])
+    assert.deepEqual(
+      result.configOptions.filter(option => option.id !== 'role'),
+      [
+        {
+          type: 'select',
+          id: 'model',
+          category: 'model',
+          name: 'Model',
+          description: 'Select the model for this session',
+          currentValue: 'test/beta',
+          options: [
+            { value: 'test/alpha', name: 'test/Alpha', description: null },
+            { value: 'test/beta', name: 'test/Beta', description: null }
+          ]
+        },
+        {
+          type: 'select',
+          id: 'thought_level',
+          category: 'thought_level',
+          name: 'Thinking',
+          description: 'Set the reasoning effort for this session',
+          currentValue: 'high',
+          options: [
+            { value: 'off', name: 'Thinking: off', description: null },
+            { value: 'minimal', name: 'Thinking: minimal', description: null },
+            { value: 'low', name: 'Thinking: low', description: null },
+            { value: 'medium', name: 'Thinking: medium', description: null },
+            { value: 'high', name: 'Thinking: high', description: null },
+            { value: 'xhigh', name: 'Thinking: xhigh', description: null },
+            { value: 'max', name: 'Thinking: max', description: null }
+          ]
+        }
+      ]
+    )
   } finally {
     ;(globalThis as any).setTimeout = realSetTimeout
   }
 })
 
-test('PiAcpAgent: setSessionConfigOption maps model changes to pi and emits config_option_update', async () => {
+test('MagPiAcpAgent: setSessionConfigOption maps model changes to pi and emits config_option_update', async () => {
   const conn = new FakeAgentSideConnection()
   const state = {
     thinkingLevel: 'medium',
@@ -128,7 +131,7 @@ test('PiAcpAgent: setSessionConfigOption maps model changes to pi and emits conf
     }
   }
 
-  const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = new FakeSessions(session) as any
 
   const result = await agent.setSessionConfigOption({
@@ -150,14 +153,11 @@ test('PiAcpAgent: setSessionConfigOption maps model changes to pi and emits conf
   ])
 })
 
-test('PiAcpAgent: role config sets the model and thinking level together', async () => {
+test('MagPiAcpAgent: role config sets the model and thinking level together', async () => {
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR
-  const agentDir = mkdtempSync(join(tmpdir(), 'pi-acp-roles-'))
+  const agentDir = mkdtempSync(join(tmpdir(), 'magpi-acp-roles-'))
   process.env.PI_CODING_AGENT_DIR = agentDir
-  writeFileSync(
-    join(agentDir, 'roles.json'),
-    JSON.stringify({ build: { model: 'test/beta', thinkingLevel: 'high' } })
-  )
+  writeFileSync(join(agentDir, 'roles.json'), JSON.stringify({ build: { model: 'test/beta', thinkingLevel: 'high' } }))
 
   try {
     const conn = new FakeAgentSideConnection()
@@ -193,7 +193,7 @@ test('PiAcpAgent: role config sets the model and thinking level together', async
       }
     }
 
-    const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
     ;(agent as any).sessions = new FakeSessions(session) as any
 
     const result = await agent.setSessionConfigOption({
@@ -208,21 +208,24 @@ test('PiAcpAgent: role config sets the model and thinking level together', async
       result.configOptions.map(option => option.id),
       ['role', 'model', 'thought_level']
     )
-    assert.deepEqual(result.configOptions.find(option => option.id === 'role'), {
-      type: 'select',
-      id: 'role',
-      category: 'mode',
-      name: 'Role',
-      description: 'Switch model and thinking level together',
-      currentValue: 'build',
-      options: [
-        {
-          value: 'build',
-          name: 'build',
-          description: 'test/beta · Thinking: high'
-        }
-      ]
-    })
+    assert.deepEqual(
+      result.configOptions.find(option => option.id === 'role'),
+      {
+        type: 'select',
+        id: 'role',
+        category: 'mode',
+        name: 'Role',
+        description: 'Switch model and thinking level together',
+        currentValue: 'build',
+        options: [
+          {
+            value: 'build',
+            name: 'build',
+            description: 'test/beta · Thinking: high'
+          }
+        ]
+      }
+    )
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir
@@ -230,7 +233,7 @@ test('PiAcpAgent: role config sets the model and thinking level together', async
   }
 })
 
-test('PiAcpAgent: setSessionConfigOption maps thought level changes to pi and emits sync updates', async () => {
+test('MagPiAcpAgent: setSessionConfigOption maps thought level changes to pi and emits sync updates', async () => {
   const conn = new FakeAgentSideConnection()
   const state = {
     thinkingLevel: 'medium',
@@ -257,7 +260,7 @@ test('PiAcpAgent: setSessionConfigOption maps thought level changes to pi and em
     }
   }
 
-  const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = new FakeSessions(session) as any
 
   const result = await agent.setSessionConfigOption({

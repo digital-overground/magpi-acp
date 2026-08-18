@@ -13,7 +13,7 @@ import { RequestError } from '@agentclientprotocol/sdk'
 import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { PiRpcProcess, PiRpcSpawnError, type PiRpcEvent } from '../pi-rpc/process.js'
-import { PI_ACP_TREE_SELECTION_TITLE, PI_ACP_TREE_SUMMARY_TITLE } from '../pi-rpc/tree-command.js'
+import { MAGPI_ACP_TREE_SELECTION_TITLE, MAGPI_ACP_TREE_SUMMARY_TITLE } from '../pi-rpc/tree-command.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { SessionStore } from './session-store.js'
 import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
@@ -182,7 +182,7 @@ function toUsageUpdate(stats: unknown): SessionUpdate | undefined {
 }
 
 export class SessionManager {
-  private sessions = new Map<string, PiAcpSession>()
+  private sessions = new Map<string, MagPiAcpSession>()
   private readonly store = new SessionStore()
 
   /** Dispose all sessions and their underlying pi subprocesses. */
@@ -191,7 +191,7 @@ export class SessionManager {
   }
 
   /** Get a registered session if it exists (no throw). */
-  maybeGet(sessionId: string): PiAcpSession | undefined {
+  maybeGet(sessionId: string): MagPiAcpSession | undefined {
     return this.sessions.get(sessionId)
   }
 
@@ -218,7 +218,7 @@ export class SessionManager {
     }
   }
 
-  async create(params: SessionCreateParams): Promise<PiAcpSession> {
+  async create(params: SessionCreateParams): Promise<MagPiAcpSession> {
     // Let pi manage session persistence in its default location (~/.pi/agent/sessions/...)
     // so sessions are visible to the regular `pi` CLI.
     let proc: PiRpcProcess
@@ -248,7 +248,7 @@ export class SessionManager {
       this.store.upsert({ sessionId, cwd: params.cwd, sessionFile })
     }
 
-    const session = new PiAcpSession({
+    const session = new MagPiAcpSession({
       sessionId,
       cwd: params.cwd,
       mcpServers: params.mcpServers,
@@ -262,7 +262,7 @@ export class SessionManager {
     return session
   }
 
-  get(sessionId: string): PiAcpSession {
+  get(sessionId: string): MagPiAcpSession {
     const s = this.sessions.get(sessionId)
     if (!s) throw RequestError.invalidParams(`Unknown sessionId: ${sessionId}`)
     return s
@@ -272,11 +272,11 @@ export class SessionManager {
    * Used by session/load: create a session object bound to an existing sessionId/proc
    * if it isn't already registered.
    */
-  getOrCreate(sessionId: string, params: SessionCreateParams & { proc: PiRpcProcess }): PiAcpSession {
+  getOrCreate(sessionId: string, params: SessionCreateParams & { proc: PiRpcProcess }): MagPiAcpSession {
     const existing = this.sessions.get(sessionId)
     if (existing) return existing
 
-    const session = new PiAcpSession({
+    const session = new MagPiAcpSession({
       sessionId,
       cwd: params.cwd,
       mcpServers: params.mcpServers,
@@ -291,7 +291,7 @@ export class SessionManager {
   }
 }
 
-export class PiAcpSession {
+export class MagPiAcpSession {
   readonly sessionId: string
   readonly cwd: string
   readonly mcpServers: McpServer[]
@@ -406,7 +406,7 @@ export class PiAcpSession {
         // This also not visible in the client
         this.emit({
           sessionUpdate: 'session_info_update',
-          _meta: { piAcp: { queueDepth: this.turnQueue.length, running: true } }
+          _meta: { magPiAcp: { queueDepth: this.turnQueue.length, running: true } }
         })
 
         return
@@ -433,7 +433,7 @@ export class PiAcpSession {
       })
       this.emit({
         sessionUpdate: 'session_info_update',
-        _meta: { piAcp: { queueDepth: 0, running: Boolean(this.pendingTurn) } }
+        _meta: { magPiAcp: { queueDepth: 0, running: Boolean(this.pendingTurn) } }
       })
     }
 
@@ -527,7 +527,7 @@ export class PiAcpSession {
     // Publish queue depth (0 because we're starting the turn now).
     this.emit({
       sessionUpdate: 'session_info_update',
-      _meta: { piAcp: { queueDepth: this.turnQueue.length, running: true } }
+      _meta: { magPiAcp: { queueDepth: this.turnQueue.length, running: true } }
     })
 
     // Kick off pi, but completion is determined by pi events, not the RPC response.
@@ -557,7 +557,7 @@ export class PiAcpSession {
         // But we still clear the queueDepth metadata.
         this.emit({
           sessionUpdate: 'session_info_update',
-          _meta: { piAcp: { queueDepth: this.turnQueue.length, running: false } }
+          _meta: { magPiAcp: { queueDepth: this.turnQueue.length, running: false } }
         })
       })
       void err
@@ -902,7 +902,7 @@ export class PiAcpSession {
             } else {
               this.emit({
                 sessionUpdate: 'session_info_update',
-                _meta: { piAcp: { queueDepth: 0, running: false } }
+                _meta: { magPiAcp: { queueDepth: 0, running: false } }
               })
             }
           })
@@ -985,7 +985,7 @@ export class PiAcpSession {
     }
 
     const title = stringProp(ev, 'title')
-    const isStrictTreeSelection = title === PI_ACP_TREE_SELECTION_TITLE || title === PI_ACP_TREE_SUMMARY_TITLE
+    const isStrictTreeSelection = title === MAGPI_ACP_TREE_SELECTION_TITLE || title === MAGPI_ACP_TREE_SUMMARY_TITLE
 
     if (!isStrictTreeSelection && !options.some(option => FREEFORM_CHOICE_RE.test(option))) {
       properties[ELICITATION_OTHER_FIELD] = {

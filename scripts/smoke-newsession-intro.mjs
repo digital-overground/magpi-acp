@@ -18,8 +18,8 @@ p.stdout.on('data', d => {
     if (msg.id === 2) {
       sid = msg.result?.sessionId
       console.log(
-        'session/new response _meta.piAcp.startupInfo present:',
-        Boolean(msg.result?._meta?.piAcp?.startupInfo)
+        'session/new response _meta.magPiAcp.startupInfo present:',
+        Boolean(msg.result?._meta?.magPiAcp?.startupInfo)
       )
     }
 

@@ -1,10 +1,10 @@
 import { AgentSideConnection, ndJsonStream } from '@agentclientprotocol/sdk'
-import { PiAcpAgent } from './acp/agent.js'
+import { MagPiAcpAgent } from './acp/agent.js'
 import { getPiCommand, shouldUseShellForPiCommand } from './pi-rpc/command.js'
 // Terminal Auth entrypoint. The ACP client launches the agent with `--terminal-login`.
 if (process.argv.includes('--terminal-login')) {
   const { spawnSync } = await import('node:child_process')
-  const cmd = getPiCommand(process.env.PI_ACP_PI_COMMAND)
+  const cmd = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND)
   const res = spawnSync(cmd, [], {
     stdio: 'inherit',
     env: process.env,
@@ -13,7 +13,7 @@ if (process.argv.includes('--terminal-login')) {
 
   if ((res as any).error && (res as any).error.code === 'ENOENT') {
     process.stderr.write(
-      `pi-acp: could not start pi (command not found: ${cmd}). Install it via \`npm install -g @earendil-works/pi-coding-agent\` or ensure \`pi\` is on your PATH.\n`
+      `magpi-acp: could not start pi (command not found: ${cmd}). Install it via \`npm install -g @earendil-works/pi-coding-agent\` or ensure \`pi\` is on your PATH.\n`
     )
     process.exit(1)
   }
@@ -49,7 +49,7 @@ const output = new ReadableStream<Uint8Array>({
 
 const stream = ndJsonStream(input, output)
 
-const agent = new AgentSideConnection(conn => new PiAcpAgent(conn), stream)
+const agent = new AgentSideConnection(conn => new MagPiAcpAgent(conn), stream)
 
 function shutdown() {
   try {

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 
 class FakeConn {
   updates: any[] = []
@@ -9,9 +9,9 @@ class FakeConn {
   }
 }
 
-test('PiAcpAgent: setSessionMode maps to pi setThinkingLevel + emits current_mode_update', async () => {
+test('MagPiAcpAgent: setSessionMode maps to pi setThinkingLevel + emits current_mode_update', async () => {
   const conn = new FakeConn()
-  const agent = new PiAcpAgent(conn as any)
+  const agent = new MagPiAcpAgent(conn as any)
 
   // Create a fake session by calling newSession is heavyweight (spawns pi).
   // Instead, reach into session manager via loadSession isn't possible either.

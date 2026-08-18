@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { activeUserMessageEntryIds } from '../../src/acp/pi-session-tree.js'
 
 test('activeUserMessageEntryIds returns only user entries on the latest branch', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'pi-acp-tree-'))
+  const directory = mkdtempSync(join(tmpdir(), 'magpi-acp-tree-'))
   const sessionFile = join(directory, 'session.jsonl')
   const entries = [
     { type: 'session', id: 'session-1' },

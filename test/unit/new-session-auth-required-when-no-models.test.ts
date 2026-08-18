@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 
 class FakeSessions {
@@ -17,7 +17,7 @@ class FakeSessions {
   }
 }
 
-test('PiAcpAgent: newSession throws AUTH_REQUIRED when pi reports zero available models', async () => {
+test('MagPiAcpAgent: newSession throws AUTH_REQUIRED when pi reports zero available models', async () => {
   const conn = new FakeAgentSideConnection()
 
   const session = {
@@ -34,7 +34,7 @@ test('PiAcpAgent: newSession throws AUTH_REQUIRED when pi reports zero available
   }
 
   const sessions = new FakeSessions(session)
-  const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = sessions as any
 
   let threw = false

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import * as readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { getPiCommand, shouldUseShellForPiCommand } from './command.js'
-import { PI_ACP_MARK_CLIENT_MESSAGE_COMMAND, PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND } from './tree-command.js'
+import { MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND, MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND } from './tree-command.js'
 
 export class PiRpcSpawnError extends Error {
   /** Underlying spawn error code, e.g. ENOENT, EACCES */
@@ -86,7 +86,7 @@ function treeExtensionPath(): string {
   const sourcePath = fileURLToPath(new URL('../pi-extension/tree.ts', import.meta.url))
   if (existsSync(sourcePath)) return sourcePath
 
-  throw new PiRpcSpawnError('Could not locate the bundled pi-acp tree extension.')
+  throw new PiRpcSpawnError('Could not locate the bundled magpi-acp tree extension.')
 }
 
 export class PiRpcProcess {
@@ -249,11 +249,11 @@ export class PiRpcProcess {
   }
 
   async markClientMessage(clientMessageId: string): Promise<void> {
-    await this.prompt(`/${PI_ACP_MARK_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
+    await this.prompt(`/${MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
   }
 
   async rewindClientMessage(clientMessageId: string): Promise<void> {
-    await this.prompt(`/${PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
+    await this.prompt(`/${MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
   }
 
   async abort(): Promise<void> {

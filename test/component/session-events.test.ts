@@ -3,15 +3,15 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PiAcpSession } from '../../src/acp/session.js'
-import { PI_ACP_TREE_SELECTION_TITLE } from '../../src/pi-rpc/tree-command.js'
+import { MagPiAcpSession } from '../../src/acp/session.js'
+import { MAGPI_ACP_TREE_SELECTION_TITLE } from '../../src/pi-rpc/tree-command.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
 
-test('PiAcpSession: emits agent_message_chunk for text_delta', async () => {
+test('MagPiAcpSession: emits agent_message_chunk for text_delta', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -35,11 +35,11 @@ test('PiAcpSession: emits agent_message_chunk for text_delta', async () => {
   })
 })
 
-test('PiAcpSession: emits agent_thought_chunk for thinking_delta', async () => {
+test('MagPiAcpSession: emits agent_thought_chunk for thinking_delta', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -63,11 +63,11 @@ test('PiAcpSession: emits agent_thought_chunk for thinking_delta', async () => {
   })
 })
 
-test('PiAcpSession: emits tool_call + tool_call_update + completes', async () => {
+test('MagPiAcpSession: emits tool_call + tool_call_update + completes', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -125,11 +125,11 @@ test('PiAcpSession: emits tool_call + tool_call_update + completes', async () =>
   assert.equal((conn.updates[2]!.update as any).rawOutput, undefined)
 })
 
-test('PiAcpSession: emits tool locations from pi path args', async () => {
+test('MagPiAcpSession: emits tool locations from pi path args', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -147,12 +147,12 @@ test('PiAcpSession: emits tool locations from pi path args', async () => {
   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: `${process.cwd()}/src/acp/session.ts` }])
 })
 
-test('PiAcpSession: handles extension select via ACP permission request', async () => {
+test('MagPiAcpSession: handles extension select via ACP permission request', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextPermissionResponse = { outcome: { outcome: 'selected', optionId: 'choice-1' } }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -189,12 +189,12 @@ test('PiAcpSession: handles extension select via ACP permission request', async 
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-1', value: 'Beta' }])
 })
 
-test('PiAcpSession: handles extension confirm via ACP permission request', async () => {
+test('MagPiAcpSession: handles extension confirm via ACP permission request', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextPermissionResponse = { outcome: { outcome: 'selected', optionId: 'no' } }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -221,12 +221,12 @@ test('PiAcpSession: handles extension confirm via ACP permission request', async
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-2', confirmed: false }])
 })
 
-test('PiAcpSession: sends cancelled response when ACP confirm is cancelled', async () => {
+test('MagPiAcpSession: sends cancelled response when ACP confirm is cancelled', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextPermissionResponse = { outcome: { outcome: 'cancelled' } }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -242,7 +242,7 @@ test('PiAcpSession: sends cancelled response when ACP confirm is cancelled', asy
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-5', cancelled: true }])
 })
 
-test('PiAcpSession: handles extension select with ACP elicitation and free-form override', async () => {
+test('MagPiAcpSession: handles extension select with ACP elicitation and free-form override', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextElicitationResponse = {
     action: 'accept',
@@ -250,7 +250,7 @@ test('PiAcpSession: handles extension select with ACP elicitation and free-form 
   }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -300,7 +300,7 @@ test('PiAcpSession: handles extension select with ACP elicitation and free-form 
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-select', value: 'A different answer' }])
 })
 
-test('PiAcpSession: does not duplicate an extension-provided free-form choice', async () => {
+test('MagPiAcpSession: does not duplicate an extension-provided free-form choice', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextElicitationResponse = {
     action: 'accept',
@@ -308,7 +308,7 @@ test('PiAcpSession: does not duplicate an extension-provided free-form choice', 
   }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -341,7 +341,7 @@ test('PiAcpSession: does not duplicate an extension-provided free-form choice', 
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-freeform', value: '✏️ Type custom response...' }])
 })
 
-test('PiAcpSession: tree selection elicitation only accepts a listed tree entry', async () => {
+test('MagPiAcpSession: tree selection elicitation only accepts a listed tree entry', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextElicitationResponse = {
     action: 'accept',
@@ -349,7 +349,7 @@ test('PiAcpSession: tree selection elicitation only accepts a listed tree entry'
   }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -363,7 +363,7 @@ test('PiAcpSession: tree selection elicitation only accepts a listed tree entry'
     type: 'extension_ui_request',
     id: 'ui-tree',
     method: 'select',
-    title: PI_ACP_TREE_SELECTION_TITLE,
+    title: MAGPI_ACP_TREE_SELECTION_TITLE,
     options: ['You: First request · user-1', 'Pi: First response · assist-1']
   })
 
@@ -382,12 +382,12 @@ test('PiAcpSession: tree selection elicitation only accepts a listed tree entry'
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-tree', value: 'You: First request · user-1' }])
 })
 
-test('PiAcpSession: handles extension confirm with ACP elicitation', async () => {
+test('MagPiAcpSession: handles extension confirm with ACP elicitation', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextElicitationResponse = { action: 'accept', content: { choice: 'no' } }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -419,11 +419,11 @@ test('PiAcpSession: handles extension confirm with ACP elicitation', async () =>
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-confirm', confirmed: false }])
 })
 
-test('PiAcpSession: handles input and editor with ACP elicitation', async () => {
+test('MagPiAcpSession: handles input and editor with ACP elicitation', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -469,12 +469,12 @@ test('PiAcpSession: handles input and editor with ACP elicitation', async () => 
   ])
 })
 
-test('PiAcpSession: cancels extension UI request when ACP elicitation is declined', async () => {
+test('MagPiAcpSession: cancels extension UI request when ACP elicitation is declined', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextElicitationResponse = { action: 'decline' }
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -495,11 +495,11 @@ test('PiAcpSession: cancels extension UI request when ACP elicitation is decline
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-declined', cancelled: true }])
 })
 
-test('PiAcpSession: cancels unsupported input and editor extension UI requests with visible fallback', async () => {
+test('MagPiAcpSession: cancels unsupported input and editor extension UI requests with visible fallback', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -522,11 +522,11 @@ test('PiAcpSession: cancels unsupported input and editor extension UI requests w
   assert.match((conn.updates[1]!.update as any).content.text, /editor UI request is not supported/)
 })
 
-test('PiAcpSession: emits agent_message_chunk for auto_retry_start with attempt/maxAttempts and rounded delay', async () => {
+test('MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attempt/maxAttempts and rounded delay', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -546,11 +546,11 @@ test('PiAcpSession: emits agent_message_chunk for auto_retry_start with attempt/
   })
 })
 
-test('PiAcpSession: formats a positive sub-second auto_retry_start delay as waiting 1s', async () => {
+test('MagPiAcpSession: formats a positive sub-second auto_retry_start delay as waiting 1s', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -570,11 +570,11 @@ test('PiAcpSession: formats a positive sub-second auto_retry_start delay as wait
   })
 })
 
-test('PiAcpSession: falls back to a generic retry message when auto_retry_start fields are missing or malformed', async () => {
+test('MagPiAcpSession: falls back to a generic retry message when auto_retry_start fields are missing or malformed', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -594,11 +594,11 @@ test('PiAcpSession: falls back to a generic retry message when auto_retry_start 
   })
 })
 
-test('PiAcpSession: omits raw errorMessage content from surfaced auto_retry_start status text', async () => {
+test('MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_start status text', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -623,11 +623,11 @@ test('PiAcpSession: omits raw errorMessage content from surfaced auto_retry_star
   assert.equal((conn.updates[0]!.update as any).content.text.includes('provider overloaded'), false)
 })
 
-test('PiAcpSession: emits agent_message_chunk for auto_retry_end', async () => {
+test('MagPiAcpSession: emits agent_message_chunk for auto_retry_end', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -647,11 +647,11 @@ test('PiAcpSession: emits agent_message_chunk for auto_retry_end', async () => {
   })
 })
 
-test('PiAcpSession: emits agent_message_chunk for auto_compaction_start', async () => {
+test('MagPiAcpSession: emits agent_message_chunk for auto_compaction_start', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -671,11 +671,11 @@ test('PiAcpSession: emits agent_message_chunk for auto_compaction_start', async 
   })
 })
 
-test('PiAcpSession: emits agent_message_chunk for auto_compaction_end', async () => {
+test('MagPiAcpSession: emits agent_message_chunk for auto_compaction_end', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -698,11 +698,11 @@ test('PiAcpSession: emits agent_message_chunk for auto_compaction_end', async ()
   })
 })
 
-test('PiAcpSession: preserves ordering when auto_retry_start is interleaved with text_delta events', async () => {
+test('MagPiAcpSession: preserves ordering when auto_retry_start is interleaved with text_delta events', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -730,11 +730,11 @@ test('PiAcpSession: preserves ordering when auto_retry_start is interleaved with
   )
 })
 
-test('PiAcpSession: defers tool locations until execution starts with complete path args', async () => {
+test('MagPiAcpSession: defers tool locations until execution starts with complete path args', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -785,16 +785,16 @@ test('PiAcpSession: defers tool locations until execution starts with complete p
   assert.deepEqual((conn.updates[2]!.update as any).locations, [{ path: '/tmp/test.txt' }])
 })
 
-test('PiAcpSession: emits edit tool line when oldText matches uniquely', async () => {
+test('MagPiAcpSession: emits edit tool line when oldText matches uniquely', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
-  const cwd = mkdtempSync(join(tmpdir(), 'pi-acp-lines-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'magpi-acp-lines-'))
   const filePath = join(cwd, 'a.txt')
 
   mkdirSync(cwd, { recursive: true })
   writeFileSync(filePath, 'one\ntwo\nneedle\nthree\n', 'utf8')
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd,
     mcpServers: [],
@@ -817,16 +817,16 @@ test('PiAcpSession: emits edit tool line when oldText matches uniquely', async (
   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: filePath, line: 3 }])
 })
 
-test('PiAcpSession: emits edit tool line from edits array when oldText matches uniquely', async () => {
+test('MagPiAcpSession: emits edit tool line from edits array when oldText matches uniquely', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
-  const cwd = mkdtempSync(join(tmpdir(), 'pi-acp-lines-edits-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'magpi-acp-lines-edits-'))
   const filePath = join(cwd, 'a.txt')
 
   mkdirSync(cwd, { recursive: true })
   writeFileSync(filePath, 'one\ntwo\nneedle\nthree\n', 'utf8')
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd,
     mcpServers: [],
@@ -849,16 +849,16 @@ test('PiAcpSession: emits edit tool line from edits array when oldText matches u
   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: filePath, line: 3 }])
 })
 
-test('PiAcpSession: emits edit tool line from stringified edits array', async () => {
+test('MagPiAcpSession: emits edit tool line from stringified edits array', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
-  const cwd = mkdtempSync(join(tmpdir(), 'pi-acp-lines-edits-string-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'magpi-acp-lines-edits-string-'))
   const filePath = join(cwd, 'a.txt')
 
   mkdirSync(cwd, { recursive: true })
   writeFileSync(filePath, 'one\ntwo\nneedle\nthree\n', 'utf8')
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd,
     mcpServers: [],
@@ -881,16 +881,16 @@ test('PiAcpSession: emits edit tool line from stringified edits array', async ()
   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: filePath, line: 3 }])
 })
 
-test('PiAcpSession: omits edit tool line when oldText matches multiple times', async () => {
+test('MagPiAcpSession: omits edit tool line when oldText matches multiple times', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
-  const cwd = mkdtempSync(join(tmpdir(), 'pi-acp-lines-dup-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'magpi-acp-lines-dup-'))
   const filePath = join(cwd, 'a.txt')
 
   mkdirSync(cwd, { recursive: true })
   writeFileSync(filePath, 'one\nneedle\ntwo\nneedle\n', 'utf8')
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd,
     mcpServers: [],
@@ -913,11 +913,11 @@ test('PiAcpSession: omits edit tool line when oldText matches multiple times', a
   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: filePath }])
 })
 
-test('PiAcpSession: emits an ACP plan from todo extension results', async () => {
+test('MagPiAcpSession: emits an ACP plan from todo extension results', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -954,11 +954,11 @@ test('PiAcpSession: emits an ACP plan from todo extension results', async () => 
   })
 })
 
-test('PiAcpSession: prompt resolves end_turn on agent_end', async () => {
+test('MagPiAcpSession: prompt resolves end_turn on agent_end', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -975,7 +975,7 @@ test('PiAcpSession: prompt resolves end_turn on agent_end', async () => {
   assert.equal(reason, 'end_turn')
 })
 
-test('PiAcpSession: emits ACP context usage and cost after a turn', async () => {
+test('MagPiAcpSession: emits ACP context usage and cost after a turn', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
   proc.sessionStats = {
@@ -983,7 +983,7 @@ test('PiAcpSession: emits ACP context usage and cost after a turn', async () => 
     cost: 0.1234
   }
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -1004,11 +1004,11 @@ test('PiAcpSession: emits ACP context usage and cost after a turn', async () => 
   })
 })
 
-test('PiAcpSession: does not re-emit startup info on first prompt after it was already sent', async () => {
+test('MagPiAcpSession: does not re-emit startup info on first prompt after it was already sent', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -1044,11 +1044,11 @@ test('PiAcpSession: does not re-emit startup info on first prompt after it was a
   assert.equal(reason, 'end_turn')
 })
 
-test('PiAcpSession: cancel flips stopReason to cancelled', async () => {
+test('MagPiAcpSession: cancel flips stopReason to cancelled', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -1068,11 +1068,11 @@ test('PiAcpSession: cancel flips stopReason to cancelled', async () => {
   assert.equal(reason, 'cancelled')
 })
 
-test('PiAcpSession: queues concurrent prompt and starts it after agent_end', async () => {
+test('MagPiAcpSession: queues concurrent prompt and starts it after agent_end', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -1105,11 +1105,11 @@ test('PiAcpSession: queues concurrent prompt and starts it after agent_end', asy
   assert.equal(r2, 'end_turn')
 })
 
-test('PiAcpSession: cancel clears queued prompts', async () => {
+test('MagPiAcpSession: cancel clears queued prompts', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],
@@ -1135,11 +1135,11 @@ test('PiAcpSession: cancel clears queued prompts', async () => {
   assert.equal(r2, 'cancelled')
 })
 
-test('PiAcpSession: expands /command before sending to pi', async () => {
+test('MagPiAcpSession: expands /command before sending to pi', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  const session = new PiAcpSession({
+  const session = new MagPiAcpSession({
     sessionId: 's1',
     cwd: process.cwd(),
     mcpServers: [],

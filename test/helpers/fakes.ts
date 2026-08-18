@@ -101,6 +101,6 @@ export class FakePiRpcProcess {
 }
 
 export function asAgentConn(conn: FakeAgentSideConnection): AgentSideConnection {
-  // We only implement the method(s) used by PiAcpSession in tests.
+  // We only implement the method(s) used by MagPiAcpSession in tests.
   return conn as unknown as AgentSideConnection
 }

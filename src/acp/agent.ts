@@ -22,14 +22,14 @@ import {
   type StopReason
 } from '@agentclientprotocol/sdk'
 import { getAuthMethods } from './auth.js'
-import { SessionManager, type PiAcpSession } from './session.js'
+import { SessionManager, type MagPiAcpSession } from './session.js'
 import { SessionStore } from './session-store.js'
 import { PiRpcProcess } from '../pi-rpc/process.js'
 import {
-  PI_ACP_CLIENT_MESSAGE_ID_META,
-  PI_ACP_TREE_COMMAND,
-  PI_ACP_TREE_REWIND_CAPABILITY,
-  PI_ACP_TREE_REWIND_METHOD
+  MAGPI_ACP_CLIENT_MESSAGE_ID_META,
+  MAGPI_ACP_TREE_COMMAND,
+  MAGPI_ACP_TREE_REWIND_CAPABILITY,
+  MAGPI_ACP_TREE_REWIND_METHOD
 } from '../pi-rpc/tree-command.js'
 import { listPiSessions, findPiSession } from './pi-sessions.js'
 import { activeUserMessageEntryIds } from './pi-session-tree.js'
@@ -131,11 +131,11 @@ import { fileURLToPath } from 'node:url'
 
 const pkg = readNearestPackageJson(import.meta.url)
 
-export class PiAcpAgent implements ACPAgent {
+export class MagPiAcpAgent implements ACPAgent {
   private readonly conn: AgentSideConnection
   private readonly sessions = new SessionManager()
   private readonly store = new SessionStore()
-  private readonly restoringSessions = new Map<string, Promise<PiAcpSession>>()
+  private readonly restoringSessions = new Map<string, Promise<MagPiAcpSession>>()
   private readonly autoTitlingSessions = new Set<string>()
   private generateTitle = generateThreadTitle
   private supportsFormElicitation = false
@@ -195,7 +195,7 @@ export class PiAcpAgent implements ACPAgent {
   private async restoreSession(
     sessionId: string,
     opts?: { cwd?: string; mcpServers?: LoadSessionRequest['mcpServers'] }
-  ): Promise<PiAcpSession> {
+  ): Promise<MagPiAcpSession> {
     const existing = this.sessions.maybeGet(sessionId)
     if (existing) return existing
 
@@ -215,7 +215,7 @@ export class PiAcpAgent implements ACPAgent {
         proc = await PiRpcProcess.spawn({
           cwd,
           sessionPath: stored.sessionFile,
-          piCommand: process.env.PI_ACP_PI_COMMAND
+          piCommand: process.env.MAGPI_ACP_PI_COMMAND
         })
       } catch (e: any) {
         if (e?.name === 'PiRpcSpawnError') {
@@ -258,8 +258,8 @@ export class PiAcpAgent implements ACPAgent {
     return {
       protocolVersion: requested === supportedVersion ? requested : supportedVersion,
       agentInfo: {
-        name: 'pied-acp',
-        title: 'pied ACP',
+        name: 'magpi-acp',
+        title: 'MagPi ACP',
         version: pkg.version ?? '0.0.0'
       },
       // Zed currently uses ClientCapabilities._meta["terminal-auth"] to decide whether to show
@@ -273,7 +273,7 @@ export class PiAcpAgent implements ACPAgent {
         promptCapabilities: {
           image: true,
           audio: false,
-          embeddedContext: process.env.PI_ACP_ENABLE_EMBEDDED_CONTEXT === 'true'
+          embeddedContext: process.env.MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT === 'true'
         },
         sessionCapabilities: {
           // **UNSTABLE** ACP capability used by Zed's codex-acp adapter.
@@ -281,7 +281,7 @@ export class PiAcpAgent implements ACPAgent {
           list: {}
         },
         _meta: {
-          [PI_ACP_TREE_REWIND_CAPABILITY]: true
+          [MAGPI_ACP_TREE_REWIND_CAPABILITY]: true
         }
       }
     }
@@ -304,7 +304,7 @@ export class PiAcpAgent implements ACPAgent {
       conn: this.conn,
       supportsFormElicitation: this.supportsFormElicitation,
       fileCommands,
-      piCommand: process.env.PI_ACP_PI_COMMAND
+      piCommand: process.env.MAGPI_ACP_PI_COMMAND
     })
 
     // Fetch state + models once (parallel) to reduce startup latency.
@@ -401,7 +401,7 @@ export class PiAcpAgent implements ACPAgent {
       models,
       modes,
       _meta: {
-        piAcp: {
+        magPiAcp: {
           startupInfo: preludeText || null
         }
       }
@@ -476,12 +476,12 @@ export class PiAcpAgent implements ACPAgent {
           const data = (await session.proc.getCommands()) as {
             commands?: Array<{ name?: unknown }>
           }
-          const commandAvailable = data.commands?.some(command => command.name === PI_ACP_TREE_COMMAND) ?? false
+          const commandAvailable = data.commands?.some(command => command.name === MAGPI_ACP_TREE_COMMAND) ?? false
           if (!commandAvailable) {
             throw new Error('The bundled Pi tree extension did not load.')
           }
 
-          await session.proc.prompt(`/${PI_ACP_TREE_COMMAND}`)
+          await session.proc.prompt(`/${MAGPI_ACP_TREE_COMMAND}`)
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error)
           await this.conn.sessionUpdate({
@@ -930,8 +930,8 @@ export class PiAcpAgent implements ACPAgent {
     }
 
     const clientMessageId =
-      typeof params._meta?.[PI_ACP_CLIENT_MESSAGE_ID_META] === 'string'
-        ? params._meta[PI_ACP_CLIENT_MESSAGE_ID_META]
+      typeof params._meta?.[MAGPI_ACP_CLIENT_MESSAGE_ID_META] === 'string'
+        ? params._meta[MAGPI_ACP_CLIENT_MESSAGE_ID_META]
         : undefined
     void this.autoTitleFirstMessage(session, message)
     const result = await session.prompt(message, images, clientMessageId)
@@ -944,7 +944,7 @@ export class PiAcpAgent implements ACPAgent {
     return { stopReason }
   }
 
-  private async autoTitleFirstMessage(session: PiAcpSession, message: string): Promise<void> {
+  private async autoTitleFirstMessage(session: MagPiAcpSession, message: string): Promise<void> {
     if (this.autoTitlingSessions.has(session.sessionId)) return
     this.autoTitlingSessions.add(session.sessionId)
 
@@ -990,7 +990,7 @@ export class PiAcpAgent implements ACPAgent {
   }
 
   async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (method !== PI_ACP_TREE_REWIND_METHOD) {
+    if (method !== MAGPI_ACP_TREE_REWIND_METHOD) {
       throw RequestError.methodNotFound(method)
     }
 
@@ -1093,7 +1093,7 @@ export class PiAcpAgent implements ACPAgent {
                 ? {
                     messageId,
                     _meta: {
-                      piAcp: {
+                      magPiAcp: {
                         clientMessageId: messageId
                       }
                     }
@@ -1197,7 +1197,7 @@ export class PiAcpAgent implements ACPAgent {
       models,
       modes,
       _meta: {
-        piAcp: {
+        magPiAcp: {
           startupInfo: null
         }
       }
@@ -1601,7 +1601,7 @@ export async function generateThreadTitle(params: {
 
   return await new Promise(resolve => {
     const child = execFile(
-      getPiCommand(process.env.PI_ACP_PI_COMMAND),
+      getPiCommand(process.env.MAGPI_ACP_PI_COMMAND),
       [
         '--print',
         '--no-session',
@@ -1618,7 +1618,7 @@ export async function generateThreadTitle(params: {
         encoding: 'utf8',
         timeout: 15_000,
         maxBuffer: 16_384,
-        shell: shouldUseShellForPiCommand(getPiCommand(process.env.PI_ACP_PI_COMMAND))
+        shell: shouldUseShellForPiCommand(getPiCommand(process.env.MAGPI_ACP_PI_COMMAND))
       },
       (error, stdout) => resolve(error ? null : normalizeGeneratedTitle(stdout))
     )
@@ -1854,5 +1854,5 @@ function readNearestPackageJson(metaUrl: string): {
   } catch {
     // ignore
   }
-  return { name: 'pi-acp', version: '0.0.0' }
+  return { name: 'magpi-acp', version: '0.0.0' }
 }

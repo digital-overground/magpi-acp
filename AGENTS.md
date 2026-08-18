@@ -1,4 +1,4 @@
-# pi-acp (ACP adapter for pi-coding-agent)
+# magpi-acp (ACP adapter for pi-coding-agent)
 
 This repository implements an **Agent Client Protocol (ACP)** adapter for **pi** (`@earendil-works/pi-coding-agent`) without modifying pi.
 
@@ -20,7 +20,7 @@ Pi RPC mode is effectively single-session, so the adapter maps:
 Use `@agentclientprotocol/sdk`:
 
 - `ndJsonStream(input, output)` to speak ACP over stdio
-- `new AgentSideConnection((conn) => new PiAcpAgent(conn, config), stream)`
+- `new AgentSideConnection((conn) => new MagPiAcpAgent(conn, config), stream)`
 
 ## Implementation constraints / decisions
 

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 import { PiRpcProcess } from '../../src/pi-rpc/process.js'
 
@@ -13,7 +13,7 @@ class FakeStore {
   }
 }
 
-test('PiAcpAgent: does not emit startup info on loadSession', async () => {
+test('MagPiAcpAgent: does not emit startup info on loadSession', async () => {
   // spy on timers (commands update is scheduled)
   const realSetTimeout = globalThis.setTimeout
   const timeouts: Array<unknown> = []
@@ -34,14 +34,14 @@ test('PiAcpAgent: does not emit startup info on loadSession', async () => {
 
   try {
     const conn = new FakeAgentSideConnection()
-    const agent = new PiAcpAgent(asAgentConn(conn))
+    const agent = new MagPiAcpAgent(asAgentConn(conn))
 
     // Inject store so loadSession resolves without depending on actual filesystem.
     ;(agent as any).store = new FakeStore()
 
     const res = await agent.loadSession({ sessionId: 's1', cwd: '/tmp/project', mcpServers: [] } as any)
 
-    assert.equal((res as any)?._meta?.piAcp?.startupInfo, null)
+    assert.equal((res as any)?._meta?.magPiAcp?.startupInfo, null)
 
     // Only available_commands_update should be scheduled.
     assert.equal(timeouts.length, 1)

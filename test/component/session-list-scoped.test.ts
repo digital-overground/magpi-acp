@@ -4,11 +4,11 @@ import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 
-test('PiAcpAgent: listSessions defaults to lastSessionCwd when cwd param is omitted', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pi-acp-test-'))
+test('MagPiAcpAgent: listSessions defaults to lastSessionCwd when cwd param is omitted', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-test-'))
 
   const dirA = join(root, 'sessions', '--a--')
   const dirB = join(root, 'sessions', '--b--')
@@ -62,7 +62,7 @@ test('PiAcpAgent: listSessions defaults to lastSessionCwd when cwd param is omit
 
   try {
     const conn = new FakeAgentSideConnection()
-    const agent = new PiAcpAgent(asAgentConn(conn))
+    const agent = new MagPiAcpAgent(asAgentConn(conn))
 
     ;(agent as any).lastSessionCwd = '/cwd/a'
 

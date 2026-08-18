@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { getPiAcpSessionMapPath } from './paths.js'
+import { getMagPiAcpSessionMapPath } from './paths.js'
 
 export type StoredSession = {
   sessionId: string
@@ -39,7 +39,7 @@ function saveFile(path: string, data: SessionMapFile): void {
 export class SessionStore {
   private readonly path: string
 
-  constructor(path = getPiAcpSessionMapPath()) {
+  constructor(path = getMagPiAcpSessionMapPath()) {
     this.path = path
   }
 

@@ -1,12 +1,12 @@
 import {
-  PI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
-  PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
-  PI_ACP_TREE_COMMAND,
-  PI_ACP_TREE_SELECTION_TITLE,
-  PI_ACP_TREE_SUMMARY_TITLE
+  MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
+  MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
+  MAGPI_ACP_TREE_COMMAND,
+  MAGPI_ACP_TREE_SELECTION_TITLE,
+  MAGPI_ACP_TREE_SUMMARY_TITLE
 } from '../pi-rpc/tree-command.js'
 
-const CLIENT_MESSAGE_ENTRY_TYPE = 'pi-acp-client-message'
+const CLIENT_MESSAGE_ENTRY_TYPE = 'magpi-acp-client-message'
 
 type MessageContent = string | Array<{ type?: string; text?: string }>
 
@@ -161,11 +161,11 @@ function treeChoices(tree: SessionTreeNode[], leafId: string | null): TreeChoice
   return choices
 }
 
-export default function registerPiAcpTree(pi: PiExtensionApi): void {
+export default function registerMagPiAcpTree(pi: PiExtensionApi): void {
   let pendingClientMessageId: string | undefined
 
-  pi.registerCommand(PI_ACP_MARK_CLIENT_MESSAGE_COMMAND, {
-    description: 'Internal pi-acp client message marker',
+  pi.registerCommand(MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND, {
+    description: 'Internal magpi-acp client message marker',
     handler: async args => {
       const clientMessageId = args.trim()
       pendingClientMessageId = clientMessageId || undefined
@@ -188,8 +188,8 @@ export default function registerPiAcpTree(pi: PiExtensionApi): void {
     pendingClientMessageId = undefined
   })
 
-  pi.registerCommand(PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND, {
-    description: 'Internal pi-acp message rewind',
+  pi.registerCommand(MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND, {
+    description: 'Internal magpi-acp message rewind',
     handler: async (args, ctx) => {
       await ctx.waitForIdle()
 
@@ -224,8 +224,8 @@ export default function registerPiAcpTree(pi: PiExtensionApi): void {
     }
   })
 
-  pi.registerCommand(PI_ACP_TREE_COMMAND, {
-    description: 'Internal pi-acp session tree navigator',
+  pi.registerCommand(MAGPI_ACP_TREE_COMMAND, {
+    description: 'Internal magpi-acp session tree navigator',
     handler: async (_args, ctx) => {
       await ctx.waitForIdle()
 
@@ -237,7 +237,7 @@ export default function registerPiAcpTree(pi: PiExtensionApi): void {
       }
 
       const selectedOption = await ctx.ui.select(
-        PI_ACP_TREE_SELECTION_TITLE,
+        MAGPI_ACP_TREE_SELECTION_TITLE,
         choices.map(choice => choice.option)
       )
       if (!selectedOption) {
@@ -256,7 +256,7 @@ export default function registerPiAcpTree(pi: PiExtensionApi): void {
         return
       }
 
-      const summaryChoice = await ctx.ui.select(PI_ACP_TREE_SUMMARY_TITLE, [
+      const summaryChoice = await ctx.ui.select(MAGPI_ACP_TREE_SUMMARY_TITLE, [
         'No summary',
         'Summarize',
         'Summarize with custom instructions'

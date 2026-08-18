@@ -1,21 +1,21 @@
 {
-  "name": "pi-acp",
-  "version": "0.0.31",
-  "description": "ACP adapter for pi coding agent",
+  "name": "magpi-acp",
+  "version": "0.1.0",
+  "description": "MagPi ACP adapter for the Pi coding agent",
   "license": "MIT",
-  "author": "Sergii Kozak <svkozak@gmail.com>",
+  "author": "Kyle Humphrey",
   "repository": {
     "type": "git",
-    "url": "https://github.com/svkozak/pi-acp.git"
+    "url": "https://github.com/kylehumphrey-ao/magpi-acp.git"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
   "bugs": {
-    "url": "https://github.com/svkozak/pi-acp/issues"
+    "url": "https://github.com/kylehumphrey-ao/magpi-acp/issues"
   },
-  "homepage": "https://github.com/svkozak/pi-acp#readme",
+  "homepage": "https://github.com/kylehumphrey-ao/magpi-acp#readme",
   "keywords": [
     "acp",
     "agent-client-protocol",
@@ -28,7 +28,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "pi-acp": "dist/index.js"
+    "magpi-acp": "dist/index.js"
   },
   "files": [
     "dist"
@@ -59,5 +59,8 @@
     "tsx": "^4.0.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.18.0"
-  }
+  },
+  "contributors": [
+    "Sergii Kozak <svkozak@gmail.com>"
+  ]
 }

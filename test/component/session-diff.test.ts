@@ -4,14 +4,14 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PiAcpSession } from '../../src/acp/session.js'
+import { MagPiAcpSession } from '../../src/acp/session.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
 
 function createSession(cwd: string) {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
-  new PiAcpSession({
+  new MagPiAcpSession({
     sessionId: 's1',
     cwd,
     mcpServers: [],
@@ -32,8 +32,8 @@ function completedToolUpdate(conn: FakeAgentSideConnection, toolCallId = 't1') {
   )
 }
 
-test('PiAcpSession: emits ACP diff content for edit tool from actual before/after file contents', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pi-acp-diff-'))
+test('MagPiAcpSession: emits ACP diff content for edit tool from actual before/after file contents', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'magpi-acp-diff-'))
   mkdirSync(dir, { recursive: true })
   const filePath = join(dir, 'a.txt')
   writeFileSync(filePath, 'before\n', 'utf8')
@@ -64,8 +64,8 @@ test('PiAcpSession: emits ACP diff content for edit tool from actual before/afte
   assert.equal((end.update as any).rawOutput, undefined, 'expected raw output to be suppressed when diff is emitted')
 })
 
-test('PiAcpSession: does not turn requested edit args into finalized ACP diffs at tool start', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pi-acp-diff-'))
+test('MagPiAcpSession: does not turn requested edit args into finalized ACP diffs at tool start', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'magpi-acp-diff-'))
   mkdirSync(dir, { recursive: true })
   const filePath = join(dir, 'a.txt')
   writeFileSync(filePath, 'before\n', 'utf8')
@@ -103,8 +103,8 @@ test('PiAcpSession: does not turn requested edit args into finalized ACP diffs a
   assert.equal(diff.newText, 'after\n')
 })
 
-test('PiAcpSession: edit diff uses realized fuzzy-match file contents instead of requested args', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pi-acp-diff-'))
+test('MagPiAcpSession: edit diff uses realized fuzzy-match file contents instead of requested args', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'magpi-acp-diff-'))
   mkdirSync(dir, { recursive: true })
   const filePath = join(dir, 'fuzzy.txt')
   writeFileSync(filePath, 'FULLWIDTH: ＡＢＣ１２３\n', 'utf8')
@@ -139,8 +139,8 @@ test('PiAcpSession: edit diff uses realized fuzzy-match file contents instead of
   assert.equal(diff.newText, 'FULLWIDTH: ascii replacement\n')
 })
 
-test('PiAcpSession: emits write diff content from actual before/after file contents on completion', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pi-acp-diff-'))
+test('MagPiAcpSession: emits write diff content from actual before/after file contents on completion', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'magpi-acp-diff-'))
   mkdirSync(dir, { recursive: true })
   const filePath = join(dir, 'a.txt')
   writeFileSync(filePath, 'before\n', 'utf8')
@@ -180,8 +180,8 @@ test('PiAcpSession: emits write diff content from actual before/after file conte
   assert.equal((end.update as any).rawOutput, undefined, 'expected raw output to be suppressed when diff is emitted')
 })
 
-test('PiAcpSession: emits write diff content for new files on completion', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'pi-acp-diff-'))
+test('MagPiAcpSession: emits write diff content for new files on completion', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'magpi-acp-diff-'))
   mkdirSync(dir, { recursive: true })
   const filePath = join(dir, 'new.txt')
 

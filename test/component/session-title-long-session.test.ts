@@ -9,7 +9,7 @@ import { listPiSessions } from '../../src/acp/pi-sessions.js'
 // Ensures we still pick up session_info.name even if it is older than the tail window.
 
 test('listPiSessions: finds session_info.name even when it is outside the tail window', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pi-acp-test-'))
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-test-'))
   const sessionsDir = join(root, 'sessions', '--p--')
   mkdirSync(sessionsDir, { recursive: true })
 

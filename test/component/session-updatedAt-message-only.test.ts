@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { listPiSessions } from '../../src/acp/pi-sessions.js'
 
 test('listPiSessions: updatedAt prefers last message timestamp over later non-message entries', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'pi-acp-test-'))
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-test-'))
   const sessionsDir = join(root, 'sessions', '--p--')
   mkdirSync(sessionsDir, { recursive: true })
 
