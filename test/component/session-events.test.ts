@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PiAcpSession } from '../../src/acp/session.js'
+import { PI_ACP_TREE_SELECTION_TITLE } from '../../src/pi-rpc/tree-command.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
 
 test('PiAcpSession: emits agent_message_chunk for text_delta', async () => {
@@ -241,6 +242,259 @@ test('PiAcpSession: sends cancelled response when ACP confirm is cancelled', asy
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-5', cancelled: true }])
 })
 
+test('PiAcpSession: handles extension select with ACP elicitation and free-form override', async () => {
+  const conn = new FakeAgentSideConnection()
+  conn.nextElicitationResponse = {
+    action: 'accept',
+    content: { choice: 'Alpha', other: 'A different answer' }
+  }
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    supportsFormElicitation: true,
+    fileCommands: []
+  })
+
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-select',
+    method: 'select',
+    title: 'Pick one',
+    options: ['Alpha', 'Beta']
+  })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.deepEqual(conn.elicitationRequests, [
+    {
+      sessionId: 's1',
+      mode: 'form',
+      message: 'Pick one',
+      requestedSchema: {
+        type: 'object',
+        properties: {
+          choice: {
+            type: 'string',
+            title: 'Suggested answers',
+            oneOf: [
+              { const: 'Alpha', title: 'Alpha' },
+              { const: 'Beta', title: 'Beta' }
+            ]
+          },
+          other: {
+            type: 'string',
+            title: 'Other answer',
+            description: 'Optional. When provided, this answer overrides the selected suggestion.'
+          }
+        },
+        required: ['choice']
+      }
+    }
+  ])
+  assert.equal(conn.permissionRequests.length, 0)
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-select', value: 'A different answer' }])
+})
+
+test('PiAcpSession: does not duplicate an extension-provided free-form choice', async () => {
+  const conn = new FakeAgentSideConnection()
+  conn.nextElicitationResponse = {
+    action: 'accept',
+    content: { choice: '✏️ Type custom response...' }
+  }
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    supportsFormElicitation: true,
+    fileCommands: []
+  })
+
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-freeform',
+    method: 'select',
+    title: 'Pick one',
+    options: ['Alpha', '✏️ Type custom response...']
+  })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema.properties, {
+    choice: {
+      type: 'string',
+      title: 'Suggested answers',
+      oneOf: [
+        { const: 'Alpha', title: 'Alpha' },
+        { const: '✏️ Type custom response...', title: '✏️ Type custom response...' }
+      ]
+    }
+  })
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-freeform', value: '✏️ Type custom response...' }])
+})
+
+test('PiAcpSession: tree selection elicitation only accepts a listed tree entry', async () => {
+  const conn = new FakeAgentSideConnection()
+  conn.nextElicitationResponse = {
+    action: 'accept',
+    content: { choice: 'You: First request · user-1' }
+  }
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    supportsFormElicitation: true,
+    fileCommands: []
+  })
+
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-tree',
+    method: 'select',
+    title: PI_ACP_TREE_SELECTION_TITLE,
+    options: ['You: First request · user-1', 'Pi: First response · assist-1']
+  })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema.properties, {
+    choice: {
+      type: 'string',
+      title: 'Suggested answers',
+      oneOf: [
+        { const: 'You: First request · user-1', title: 'You: First request · user-1' },
+        { const: 'Pi: First response · assist-1', title: 'Pi: First response · assist-1' }
+      ]
+    }
+  })
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-tree', value: 'You: First request · user-1' }])
+})
+
+test('PiAcpSession: handles extension confirm with ACP elicitation', async () => {
+  const conn = new FakeAgentSideConnection()
+  conn.nextElicitationResponse = { action: 'accept', content: { choice: 'no' } }
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    supportsFormElicitation: true,
+    fileCommands: []
+  })
+
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-confirm',
+    method: 'confirm',
+    title: 'Clear session?',
+    message: 'All messages will be lost.'
+  })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.equal(conn.elicitationRequests.length, 1)
+  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema.properties.choice, {
+    type: 'string',
+    title: 'All messages will be lost.',
+    oneOf: [
+      { const: 'yes', title: 'Yes' },
+      { const: 'no', title: 'No' }
+    ]
+  })
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-confirm', confirmed: false }])
+})
+
+test('PiAcpSession: handles input and editor with ACP elicitation', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    supportsFormElicitation: true,
+    fileCommands: []
+  })
+
+  conn.nextElicitationResponse = { action: 'accept', content: { answer: 'Kyle' } }
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-input',
+    method: 'input',
+    title: 'Enter name',
+    placeholder: 'Your name'
+  })
+  await new Promise(r => setTimeout(r, 0))
+
+  conn.nextElicitationResponse = { action: 'accept', content: { answer: 'Edited text' } }
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-editor',
+    method: 'editor',
+    title: 'Edit text',
+    prefill: 'Original text'
+  })
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema.properties.answer, {
+    type: 'string',
+    title: 'Answer',
+    description: 'Your name'
+  })
+  assert.deepEqual((conn.elicitationRequests[1] as any).requestedSchema.properties.answer, {
+    type: 'string',
+    title: 'Answer',
+    default: 'Original text'
+  })
+  assert.deepEqual(proc.extensionUiResponses, [
+    { id: 'ui-input', value: 'Kyle' },
+    { id: 'ui-editor', value: 'Edited text' }
+  ])
+})
+
+test('PiAcpSession: cancels extension UI request when ACP elicitation is declined', async () => {
+  const conn = new FakeAgentSideConnection()
+  conn.nextElicitationResponse = { action: 'decline' }
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    supportsFormElicitation: true,
+    fileCommands: []
+  })
+
+  proc.emit({
+    type: 'extension_ui_request',
+    id: 'ui-declined',
+    method: 'input',
+    title: 'Enter name'
+  })
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-declined', cancelled: true }])
+})
+
 test('PiAcpSession: cancels unsupported input and editor extension UI requests with visible fallback', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
@@ -476,7 +730,7 @@ test('PiAcpSession: preserves ordering when auto_retry_start is interleaved with
   )
 })
 
-test('PiAcpSession: emits streamed tool locations from pi path args', async () => {
+test('PiAcpSession: defers tool locations until execution starts with complete path args', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
@@ -496,16 +750,39 @@ test('PiAcpSession: emits streamed tool locations from pi path args', async () =
       toolCall: {
         id: 't1',
         name: 'write',
-        arguments: { path: '/tmp/test.txt', content: 'hello' }
+        arguments: { path: '/tmp/tes', content: 'hello' }
       }
     }
   })
 
+  proc.emit({
+    type: 'message_update',
+    assistantMessageEvent: {
+      type: 'toolcall_delta',
+      toolCall: {
+        id: 't1',
+        name: 'write',
+        arguments: { path: '/tmp/test', content: 'hello' }
+      }
+    }
+  })
+
+  proc.emit({
+    type: 'tool_execution_start',
+    toolCallId: 't1',
+    toolName: 'write',
+    args: { path: '/tmp/test.txt', content: 'hello' }
+  })
+
   await new Promise(r => setTimeout(r, 0))
 
-  assert.equal(conn.updates.length, 1)
+  assert.equal(conn.updates.length, 3)
   assert.equal(conn.updates[0]!.update.sessionUpdate, 'tool_call')
-  assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: '/tmp/test.txt' }])
+  assert.equal((conn.updates[0]!.update as any).locations, undefined)
+  assert.equal(conn.updates[1]!.update.sessionUpdate, 'tool_call_update')
+  assert.equal((conn.updates[1]!.update as any).locations, undefined)
+  assert.equal(conn.updates[2]!.update.sessionUpdate, 'tool_call_update')
+  assert.deepEqual((conn.updates[2]!.update as any).locations, [{ path: '/tmp/test.txt' }])
 })
 
 test('PiAcpSession: emits edit tool line when oldText matches uniquely', async () => {
@@ -636,6 +913,47 @@ test('PiAcpSession: omits edit tool line when oldText matches multiple times', a
   assert.deepEqual((conn.updates[0]!.update as any).locations, [{ path: filePath }])
 })
 
+test('PiAcpSession: emits an ACP plan from todo extension results', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+
+  new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  proc.emit({
+    type: 'tool_execution_end',
+    toolCallId: 'todo-1',
+    toolName: 'todo',
+    result: {
+      details: {
+        tasks: [
+          { id: 1, subject: 'Explore the repository', status: 'completed' },
+          { id: 2, subject: 'Implement the change', status: 'in_progress' },
+          { id: 3, subject: 'Run tests', status: 'pending' },
+          { id: 4, subject: 'Discarded task', status: 'deleted' }
+        ]
+      }
+    }
+  })
+
+  await new Promise(r => setTimeout(r, 0))
+
+  assert.deepEqual(conn.updates.find(entry => entry.update.sessionUpdate === 'plan')?.update, {
+    sessionUpdate: 'plan',
+    entries: [
+      { content: 'Explore the repository', priority: 'medium', status: 'completed' },
+      { content: 'Implement the change', priority: 'medium', status: 'in_progress' },
+      { content: 'Run tests', priority: 'medium', status: 'pending' }
+    ]
+  })
+})
+
 test('PiAcpSession: prompt resolves end_turn on agent_end', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
@@ -655,6 +973,35 @@ test('PiAcpSession: prompt resolves end_turn on agent_end', async () => {
   proc.emit({ type: 'agent_end' })
   const reason = await p
   assert.equal(reason, 'end_turn')
+})
+
+test('PiAcpSession: emits ACP context usage and cost after a turn', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+  proc.sessionStats = {
+    contextUsage: { tokens: 32_100.4, contextWindow: 128_000, percent: 25.0784375 },
+    cost: 0.1234
+  }
+
+  const session = new PiAcpSession({
+    sessionId: 's1',
+    cwd: process.cwd(),
+    mcpServers: [],
+    proc: proc as any,
+    conn: asAgentConn(conn),
+    fileCommands: []
+  })
+
+  const prompt = session.prompt('hello')
+  proc.emit({ type: 'agent_end' })
+
+  assert.equal(await prompt, 'end_turn')
+  assert.deepEqual(conn.updates.find(entry => entry.update.sessionUpdate === 'usage_update')?.update, {
+    sessionUpdate: 'usage_update',
+    used: 32_100,
+    size: 128_000,
+    cost: { amount: 0.1234, currency: 'USD' }
+  })
 })
 
 test('PiAcpSession: does not re-emit startup info on first prompt after it was already sent', async () => {

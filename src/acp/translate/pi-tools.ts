@@ -1,3 +1,35 @@
+import type { PlanEntry } from '@agentclientprotocol/sdk'
+
+export function todoResultToPlanEntries(result: unknown): PlanEntry[] | undefined {
+  const details = (result as { details?: { tasks?: unknown; todos?: unknown } } | null)?.details
+
+  if (Array.isArray(details?.tasks)) {
+    const entries: PlanEntry[] = []
+    for (const task of details.tasks) {
+      const item = task as { subject?: unknown; status?: unknown } | null
+      if (typeof item?.subject !== 'string') return undefined
+      if (item.status === 'deleted') continue
+      if (item.status !== 'pending' && item.status !== 'in_progress' && item.status !== 'completed') return undefined
+      entries.push({ content: item.subject, priority: 'medium', status: item.status })
+    }
+    return entries
+  }
+
+  if (!Array.isArray(details?.todos)) return undefined
+
+  let hasActiveTodo = false
+  const entries: PlanEntry[] = []
+  for (const todo of details.todos) {
+    const item = todo as { text?: unknown; done?: unknown } | null
+    if (typeof item?.text !== 'string' || typeof item.done !== 'boolean') return undefined
+
+    const status = item.done ? 'completed' : hasActiveTodo ? 'pending' : 'in_progress'
+    if (!item.done) hasActiveTodo = true
+    entries.push({ content: item.text, priority: 'medium', status })
+  }
+  return entries
+}
+
 export function toolResultToText(result: unknown): string {
   if (!result) return ''
 

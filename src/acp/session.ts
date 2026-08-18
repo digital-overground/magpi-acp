@@ -1,6 +1,7 @@
 import type {
   AgentSideConnection,
   ContentBlock,
+  ElicitationSchema,
   McpServer,
   PermissionOption,
   SessionUpdate,
@@ -12,6 +13,7 @@ import { RequestError } from '@agentclientprotocol/sdk'
 import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { PiRpcProcess, PiRpcSpawnError, type PiRpcEvent } from '../pi-rpc/process.js'
+import { PI_ACP_TREE_SELECTION_TITLE, PI_ACP_TREE_SUMMARY_TITLE } from '../pi-rpc/tree-command.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { SessionStore } from './session-store.js'
 import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
@@ -26,12 +28,13 @@ import {
   bashTerminalOutputMeta,
   isBashTool
 } from './translate/bash.js'
-import { toolResultToText } from './translate/pi-tools.js'
+import { todoResultToPlanEntries, toolResultToText } from './translate/pi-tools.js'
 
 type SessionCreateParams = {
   cwd: string
   mcpServers: McpServer[]
   conn: AgentSideConnection
+  supportsFormElicitation?: boolean
   fileCommands?: import('./slash-commands.js').FileSlashCommand[]
   piCommand?: string
 }
@@ -46,11 +49,13 @@ type PendingTurn = {
 type QueuedTurn = {
   message: string
   images: unknown[]
+  clientMessageId?: string
   resolve: (reason: StopReason) => void
   reject: (err: unknown) => void
 }
 
 type PermissionResponse = Awaited<ReturnType<AgentSideConnection['requestPermission']>>
+type ElicitationResponse = Awaited<ReturnType<AgentSideConnection['unstable_createElicitation']>>
 
 const CONFIRM_PERMISSION_OPTIONS: PermissionOption[] = [
   { optionId: 'yes', name: 'Yes', kind: 'allow_once' },
@@ -58,6 +63,10 @@ const CONFIRM_PERMISSION_OPTIONS: PermissionOption[] = [
 ]
 const EXTENSION_UI_RAW_INPUT_KEYS = ['title', 'message', 'options', 'placeholder', 'prefill'] as const
 const CHOICE_OPTION_PREFIX = 'choice-'
+const ELICITATION_CHOICE_FIELD = 'choice'
+const ELICITATION_OTHER_FIELD = 'other'
+const ELICITATION_ANSWER_FIELD = 'answer'
+const FREEFORM_CHOICE_RE = /\b(?:type|enter|write)\s+(?:a\s+)?(?:custom|free[- ]?form)\s+(?:answer|response)\b/i
 
 function findUniqueLineNumber(text: string, needle: string): number | undefined {
   if (!needle) return undefined
@@ -147,6 +156,31 @@ function toToolCallLocations(args: unknown, cwd: string, line?: number): ToolCal
   return [{ path: resolvedPath, ...(typeof line === 'number' ? { line } : {}) }]
 }
 
+function toUsageUpdate(stats: unknown): SessionUpdate | undefined {
+  const record = stats as
+    | {
+        contextUsage?: { tokens?: unknown; contextWindow?: unknown }
+        cost?: unknown
+      }
+    | null
+    | undefined
+  const used = record?.contextUsage?.tokens
+  const size = record?.contextUsage?.contextWindow
+
+  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0) return undefined
+  if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0) return undefined
+
+  const cost = record?.cost
+  return {
+    sessionUpdate: 'usage_update',
+    used: Math.round(used),
+    size: Math.round(size),
+    ...(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0
+      ? { cost: { amount: cost, currency: 'USD' } }
+      : {})
+  }
+}
+
 export class SessionManager {
   private sessions = new Map<string, PiAcpSession>()
   private readonly store = new SessionStore()
@@ -220,6 +254,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc,
       conn: params.conn,
+      supportsFormElicitation: params.supportsFormElicitation,
       fileCommands: params.fileCommands ?? []
     })
 
@@ -247,6 +282,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc: params.proc,
       conn: params.conn,
+      supportsFormElicitation: params.supportsFormElicitation,
       fileCommands: params.fileCommands ?? []
     })
 
@@ -265,6 +301,7 @@ export class PiAcpSession {
 
   readonly proc: PiRpcProcess
   private readonly conn: AgentSideConnection
+  private readonly supportsFormElicitation: boolean
   private readonly fileCommands: FileSlashCommand[]
 
   // Used to map abort semantics to ACP stopReason.
@@ -301,6 +338,7 @@ export class PiAcpSession {
     mcpServers: McpServer[]
     proc: PiRpcProcess
     conn: AgentSideConnection
+    supportsFormElicitation?: boolean
     fileCommands?: FileSlashCommand[]
   }) {
     this.sessionId = opts.sessionId
@@ -308,6 +346,7 @@ export class PiAcpSession {
     this.mcpServers = opts.mcpServers
     this.proc = opts.proc
     this.conn = opts.conn
+    this.supportsFormElicitation = opts.supportsFormElicitation ?? false
     this.fileCommands = opts.fileCommands ?? []
 
     this.proc.onEvent(ev => this.handlePiEvent(ev))
@@ -333,12 +372,21 @@ export class PiAcpSession {
     })
   }
 
-  async prompt(message: string, images: unknown[] = []): Promise<StopReason> {
+  async sendUsageUpdate(): Promise<void> {
+    try {
+      const update = toUsageUpdate(await this.proc.getSessionStats())
+      if (update) this.emit(update)
+    } catch {
+      // Usage display is optional; it must not affect the agent turn.
+    }
+  }
+
+  async prompt(message: string, images: unknown[] = [], clientMessageId?: string): Promise<StopReason> {
     // pi RPC mode disables slash command expansion, so we do it here.
     const expandedMessage = expandSlashCommand(message, this.fileCommands)
 
     const turnPromise = new Promise<StopReason>((resolve, reject) => {
-      const queued: QueuedTurn = { message: expandedMessage, images, resolve, reject }
+      const queued: QueuedTurn = { message: expandedMessage, images, clientMessageId, resolve, reject }
 
       // If a turn is already running, enqueue.
       if (this.pendingTurn) {
@@ -485,7 +533,11 @@ export class PiAcpSession {
     // Kick off pi, but completion is determined by pi events, not the RPC response.
     // Important: pi may emit multiple `turn_end` events (e.g. when the model requests tools).
     // The full prompt is finished when we see `agent_end`.
-    this.proc.prompt(t.message, t.images).catch(err => {
+    const prompt = t.clientMessageId
+      ? this.proc.markClientMessage(t.clientMessageId).then(() => this.proc.prompt(t.message, t.images))
+      : this.proc.prompt(t.message, t.images)
+
+    prompt.catch(err => {
       // If the subprocess errors before we get an `agent_end`, treat as error unless cancelled.
       // Also ensure we flush any already-enqueued updates first.
       void this.flushEmits().finally(() => {
@@ -562,7 +614,6 @@ export class PiAcpSession {
                     }
                   })()
 
-            const locations = toToolCallLocations(rawInput, this.cwd)
             const existingStatus = this.currentToolCalls.get(toolCallId)
             // IMPORTANT: never downgrade status (e.g. if we already marked in_progress via tool_execution_start).
             const status = existingStatus ?? 'pending'
@@ -575,7 +626,6 @@ export class PiAcpSession {
                 toolName,
                 args: rawInput,
                 status,
-                locations,
                 includeTerminal: !existingStatus
               })
             } else if (!existingStatus) {
@@ -586,7 +636,6 @@ export class PiAcpSession {
                 title: toolName,
                 kind: toToolKind(toolName),
                 status,
-                locations,
                 rawInput
               })
             } else {
@@ -596,7 +645,6 @@ export class PiAcpSession {
                 sessionUpdate: 'tool_call_update',
                 toolCallId,
                 status,
-                locations,
                 rawInput
               })
             }
@@ -714,6 +762,10 @@ export class PiAcpSession {
 
         const result = (ev as any).result
         const isError = Boolean((ev as any).isError)
+        const toolName = String((ev as any).toolName ?? '')
+        const todoEntries = toolName === 'todo' && !isError ? todoResultToPlanEntries(result) : undefined
+        if (todoEntries) this.emit({ sessionUpdate: 'plan', entries: todoEntries })
+
         if (this.bashToolCallIds.has(toolCallId)) {
           this.emitBashOutputUpdate({
             toolCallId,
@@ -831,27 +883,29 @@ export class PiAcpSession {
       case 'agent_end': {
         // Ensure all updates derived from pi events are delivered before we resolve
         // the ACP `session/prompt` request.
-        void this.flushEmits().finally(() => {
-          const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
-          this.pendingTurn?.resolve(reason)
-          this.pendingTurn = null
-          this.inAgentLoop = false
+        void this.sendUsageUpdate()
+          .finally(() => this.flushEmits())
+          .finally(() => {
+            const reason: StopReason = this.cancelRequested ? 'cancelled' : 'end_turn'
+            this.pendingTurn?.resolve(reason)
+            this.pendingTurn = null
+            this.inAgentLoop = false
 
-          // Start next queued prompt, if any.
-          const next = this.turnQueue.shift()
-          if (next) {
-            this.emit({
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text: `Starting queued message. (${this.turnQueue.length} remaining)` }
-            })
-            this.startTurn(next)
-          } else {
-            this.emit({
-              sessionUpdate: 'session_info_update',
-              _meta: { piAcp: { queueDepth: 0, running: false } }
-            })
-          }
-        })
+            // Start next queued prompt, if any.
+            const next = this.turnQueue.shift()
+            if (next) {
+              this.emit({
+                sessionUpdate: 'agent_message_chunk',
+                content: { type: 'text', text: `Starting queued message. (${this.turnQueue.length} remaining)` }
+              })
+              this.startTurn(next)
+            } else {
+              this.emit({
+                sessionUpdate: 'session_info_update',
+                _meta: { piAcp: { queueDepth: 0, running: false } }
+              })
+            }
+          })
         break
       }
 
@@ -868,16 +922,29 @@ export class PiAcpSession {
     }
 
     if (method === 'select') {
-      await this.handleExtensionSelect(ev, id)
+      if (this.supportsFormElicitation) {
+        await this.handleExtensionSelectElicitation(ev, id)
+      } else {
+        await this.handleExtensionSelect(ev, id)
+      }
       return
     }
 
     if (method === 'confirm') {
-      await this.handleExtensionConfirm(ev, id)
+      if (this.supportsFormElicitation) {
+        await this.handleExtensionConfirmElicitation(ev, id)
+      } else {
+        await this.handleExtensionConfirm(ev, id)
+      }
       return
     }
 
     if (method === 'input' || method === 'editor') {
+      if (this.supportsFormElicitation) {
+        await this.handleExtensionTextElicitation(ev, id, method)
+        return
+      }
+
       this.emit({
         sessionUpdate: 'agent_message_chunk',
         content: {
@@ -899,6 +966,123 @@ export class PiAcpSession {
     }
 
     await this.proc.sendExtensionUiResponse({ id, cancelled: true })
+  }
+
+  private async handleExtensionSelectElicitation(ev: PiRpcEvent, id: string): Promise<void> {
+    const rawOptions = ev.options
+    const options = Array.isArray(rawOptions) ? rawOptions.map(option => String(option)) : []
+    if (!options.length) {
+      await this.proc.sendExtensionUiResponse({ id, cancelled: true })
+      return
+    }
+
+    const properties: NonNullable<ElicitationSchema['properties']> = {
+      [ELICITATION_CHOICE_FIELD]: {
+        type: 'string',
+        title: 'Suggested answers',
+        oneOf: options.map(option => ({ const: option, title: option }))
+      }
+    }
+
+    const title = stringProp(ev, 'title')
+    const isStrictTreeSelection = title === PI_ACP_TREE_SELECTION_TITLE || title === PI_ACP_TREE_SUMMARY_TITLE
+
+    if (!isStrictTreeSelection && !options.some(option => FREEFORM_CHOICE_RE.test(option))) {
+      properties[ELICITATION_OTHER_FIELD] = {
+        type: 'string',
+        title: 'Other answer',
+        description: 'Optional. When provided, this answer overrides the selected suggestion.'
+      }
+    }
+
+    const response = await this.requestExtensionElicitation(ev, {
+      type: 'object',
+      properties,
+      required: [ELICITATION_CHOICE_FIELD]
+    })
+
+    if (response?.action !== 'accept') {
+      await this.proc.sendExtensionUiResponse({ id, cancelled: true })
+      return
+    }
+
+    const other = elicitationString(response, ELICITATION_OTHER_FIELD)
+    const choice = elicitationString(response, ELICITATION_CHOICE_FIELD)
+    const value = other?.trim() ? other : choice
+    await this.proc.sendExtensionUiResponse(value === null ? { id, cancelled: true } : { id, value })
+  }
+
+  private async handleExtensionConfirmElicitation(ev: PiRpcEvent, id: string): Promise<void> {
+    const message = stringProp(ev, 'message')
+    const response = await this.requestExtensionElicitation(ev, {
+      type: 'object',
+      properties: {
+        [ELICITATION_CHOICE_FIELD]: {
+          type: 'string',
+          title: message || 'Response',
+          oneOf: [
+            { const: 'yes', title: 'Yes' },
+            { const: 'no', title: 'No' }
+          ]
+        }
+      },
+      required: [ELICITATION_CHOICE_FIELD]
+    })
+
+    if (response?.action !== 'accept') {
+      await this.proc.sendExtensionUiResponse({ id, cancelled: true })
+      return
+    }
+
+    const choice = elicitationString(response, ELICITATION_CHOICE_FIELD)
+    if (choice !== 'yes' && choice !== 'no') {
+      await this.proc.sendExtensionUiResponse({ id, cancelled: true })
+      return
+    }
+
+    await this.proc.sendExtensionUiResponse({ id, confirmed: choice === 'yes' })
+  }
+
+  private async handleExtensionTextElicitation(ev: PiRpcEvent, id: string, method: 'input' | 'editor'): Promise<void> {
+    const hint = method === 'input' ? stringProp(ev, 'placeholder') : null
+    const prefill = method === 'editor' ? stringProp(ev, 'prefill') : null
+    const response = await this.requestExtensionElicitation(ev, {
+      type: 'object',
+      properties: {
+        [ELICITATION_ANSWER_FIELD]: {
+          type: 'string',
+          title: 'Answer',
+          ...(hint ? { description: hint } : {}),
+          ...(prefill !== null ? { default: prefill } : {})
+        }
+      }
+    })
+
+    if (response?.action !== 'accept') {
+      await this.proc.sendExtensionUiResponse({ id, cancelled: true })
+      return
+    }
+
+    await this.proc.sendExtensionUiResponse({
+      id,
+      value: elicitationString(response, ELICITATION_ANSWER_FIELD) ?? ''
+    })
+  }
+
+  private async requestExtensionElicitation(
+    ev: PiRpcEvent,
+    requestedSchema: ElicitationSchema
+  ): Promise<ElicitationResponse | null> {
+    try {
+      return await this.conn.unstable_createElicitation({
+        sessionId: this.sessionId,
+        mode: 'form',
+        message: stringProp(ev, 'title') ?? 'Pi requests input',
+        requestedSchema
+      })
+    } catch {
+      return null
+    }
   }
 
   private async handleExtensionSelect(ev: PiRpcEvent, id: string): Promise<void> {
@@ -978,6 +1162,12 @@ function extensionUiToolCall(id: string, ev: PiRpcEvent) {
 
 function stringProp(source: Record<string, unknown>, key: string): string | null {
   const value = source[key]
+  return typeof value === 'string' ? value : null
+}
+
+function elicitationString(response: ElicitationResponse, key: string): string | null {
+  if (response.action !== 'accept') return null
+  const value = response.content?.[key]
   return typeof value === 'string' ? value : null
 }
 

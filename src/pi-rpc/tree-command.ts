@@ -1,0 +1,8 @@
+export const PI_ACP_TREE_COMMAND = '__pi_acp_internal_tree'
+export const PI_ACP_MARK_CLIENT_MESSAGE_COMMAND = '__pi_acp_internal_mark_client_message'
+export const PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND = '__pi_acp_internal_rewind_client_message'
+export const PI_ACP_TREE_SELECTION_TITLE = 'Choose where Pi should continue from'
+export const PI_ACP_TREE_SUMMARY_TITLE = 'Summarize the branch being left?'
+export const PI_ACP_TREE_REWIND_METHOD = '_pi-acp/session/rewind'
+export const PI_ACP_TREE_REWIND_CAPABILITY = 'pi-acp/tree-rewind'
+export const PI_ACP_CLIENT_MESSAGE_ID_META = 'pi-acp/client-message-id'

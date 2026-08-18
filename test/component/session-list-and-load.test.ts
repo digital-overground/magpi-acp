@@ -85,7 +85,14 @@ test('PiAcpAgent: listSessions lists pi sessions and loadSession replays history
         getMessages: async () => ({
           messages: [
             { role: 'user', content: 'Hello' },
-            { role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] }
+            { role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] },
+            {
+              role: 'toolResult',
+              toolName: 'todo',
+              details: {
+                tasks: [{ id: 1, subject: 'Verify the restored session', status: 'in_progress' }]
+              }
+            }
           ]
         }),
         getAvailableModels: async () => ({ models: [] }),
@@ -104,6 +111,10 @@ test('PiAcpAgent: listSessions lists pi sessions and loadSession replays history
 
       assert.ok(texts.some(t => t.kind === 'user_message_chunk' && t.text === 'Hello'))
       assert.ok(texts.some(t => t.kind === 'agent_message_chunk' && t.text === 'Hi there!'))
+      assert.deepEqual(conn.updates.find(update => update.update.sessionUpdate === 'plan')?.update, {
+        sessionUpdate: 'plan',
+        entries: [{ content: 'Verify the restored session', priority: 'medium', status: 'in_progress' }]
+      })
     } finally {
       PiRpcProcess.spawn = originalSpawn
     }

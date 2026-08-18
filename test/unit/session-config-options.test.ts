@@ -2,6 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 class FakeSessions {
   constructor(private readonly session: any) {}
@@ -59,7 +62,7 @@ test('PiAcpAgent: newSession returns configOptions for model and thinking select
 
     assert.equal(result.models?.currentModelId, 'test/beta')
     assert.equal(result.modes?.currentModeId, 'high')
-    assert.deepEqual(result.configOptions, [
+    assert.deepEqual(result.configOptions.filter(option => option.id !== 'role'), [
       {
         type: 'select',
         id: 'model',
@@ -85,7 +88,8 @@ test('PiAcpAgent: newSession returns configOptions for model and thinking select
           { value: 'low', name: 'Thinking: low', description: null },
           { value: 'medium', name: 'Thinking: medium', description: null },
           { value: 'high', name: 'Thinking: high', description: null },
-          { value: 'xhigh', name: 'Thinking: xhigh', description: null }
+          { value: 'xhigh', name: 'Thinking: xhigh', description: null },
+          { value: 'max', name: 'Thinking: max', description: null }
         ]
       }
     ])
@@ -144,6 +148,86 @@ test('PiAcpAgent: setSessionConfigOption maps model changes to pi and emits conf
       }
     }
   ])
+})
+
+test('PiAcpAgent: role config sets the model and thinking level together', async () => {
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR
+  const agentDir = mkdtempSync(join(tmpdir(), 'pi-acp-roles-'))
+  process.env.PI_CODING_AGENT_DIR = agentDir
+  writeFileSync(
+    join(agentDir, 'roles.json'),
+    JSON.stringify({ build: { model: 'test/beta', thinkingLevel: 'high' } })
+  )
+
+  try {
+    const conn = new FakeAgentSideConnection()
+    const state = {
+      thinkingLevel: 'medium',
+      model: { provider: 'test', id: 'alpha' }
+    }
+    const setModelCalls: Array<{ provider: string; modelId: string }> = []
+    const thinkingLevels: string[] = []
+    const session = {
+      sessionId: 's1',
+      cwd: process.cwd(),
+      proc: {
+        async getAvailableModels() {
+          return {
+            models: [
+              { provider: 'test', id: 'alpha', name: 'Alpha' },
+              { provider: 'test', id: 'beta', name: 'Beta' }
+            ]
+          }
+        },
+        async getState() {
+          return state
+        },
+        async setModel(provider: string, modelId: string) {
+          setModelCalls.push({ provider, modelId })
+          state.model = { provider, id: modelId }
+        },
+        async setThinkingLevel(level: string) {
+          thinkingLevels.push(level)
+          state.thinkingLevel = level
+        }
+      }
+    }
+
+    const agent = new PiAcpAgent(asAgentConn(conn), {} as any)
+    ;(agent as any).sessions = new FakeSessions(session) as any
+
+    const result = await agent.setSessionConfigOption({
+      sessionId: 's1',
+      configId: 'role',
+      value: 'build'
+    } as any)
+
+    assert.deepEqual(setModelCalls, [{ provider: 'test', modelId: 'beta' }])
+    assert.deepEqual(thinkingLevels, ['high'])
+    assert.deepEqual(
+      result.configOptions.map(option => option.id),
+      ['role', 'model', 'thought_level']
+    )
+    assert.deepEqual(result.configOptions.find(option => option.id === 'role'), {
+      type: 'select',
+      id: 'role',
+      category: 'mode',
+      name: 'Role',
+      description: 'Switch model and thinking level together',
+      currentValue: 'build',
+      options: [
+        {
+          value: 'build',
+          name: 'build',
+          description: 'test/beta · Thinking: high'
+        }
+      ]
+    })
+  } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir
+    rmSync(agentDir, { recursive: true, force: true })
+  }
 })
 
 test('PiAcpAgent: setSessionConfigOption maps thought level changes to pi and emits sync updates', async () => {

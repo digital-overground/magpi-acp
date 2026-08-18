@@ -40,6 +40,25 @@ export function getAgentDir(): string {
   return process.env.PI_CODING_AGENT_DIR ? resolve(process.env.PI_CODING_AGENT_DIR) : join(homedir(), '.pi', 'agent')
 }
 
+export type PiRole = {
+  id: string
+  model: string
+  thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+}
+
+export function getRoles(): PiRole[] {
+  const roles = readJsonFile(join(getAgentDir(), 'roles.json'))
+  const thinkingLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+
+  return Object.entries(roles).flatMap(([id, value]) => {
+    if (!isObject(value)) return []
+    const model = typeof value.model === 'string' ? value.model.trim() : ''
+    const thinkingLevel = typeof value.thinkingLevel === 'string' ? value.thinkingLevel : ''
+    if (!id || !model || !thinkingLevels.has(thinkingLevel)) return []
+    return [{ id, model, thinkingLevel } as PiRole]
+  })
+}
+
 /**
  * Mirror pi settings semantics (global + project merge, project overrides global).
  * Only returns the bits we currently need.

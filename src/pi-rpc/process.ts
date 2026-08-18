@@ -1,6 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import * as readline from 'node:readline'
+import { fileURLToPath } from 'node:url'
 import { getPiCommand, shouldUseShellForPiCommand } from './command.js'
+import { PI_ACP_MARK_CLIENT_MESSAGE_COMMAND, PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND } from './tree-command.js'
 
 export class PiRpcSpawnError extends Error {
   /** Underlying spawn error code, e.g. ENOENT, EACCES */
@@ -35,7 +38,7 @@ type PiRpcCommand =
   | { type: 'get_available_models'; id?: string }
   | { type: 'set_model'; id?: string; provider: string; modelId: string }
   // Thinking
-  | { type: 'set_thinking_level'; id?: string; level: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' }
+  | { type: 'set_thinking_level'; id?: string; level: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' }
   // Modes
   | { type: 'set_follow_up_mode'; id?: string; mode: 'all' | 'one-at-a-time' }
   | { type: 'set_steering_mode'; id?: string; mode: 'all' | 'one-at-a-time' }
@@ -74,6 +77,16 @@ type SpawnParams = {
   piCommand?: string
   /** If set, pi will persist the session to this exact file (via `--session <path>`). */
   sessionPath?: string
+}
+
+function treeExtensionPath(): string {
+  const bundledPath = fileURLToPath(new URL('./pi-tree-extension.js', import.meta.url))
+  if (existsSync(bundledPath)) return bundledPath
+
+  const sourcePath = fileURLToPath(new URL('../pi-extension/tree.ts', import.meta.url))
+  if (existsSync(sourcePath)) return sourcePath
+
+  throw new PiRpcSpawnError('Could not locate the bundled pi-acp tree extension.')
 }
 
 export class PiRpcProcess {
@@ -134,7 +147,7 @@ export class PiRpcProcess {
     // - themes are irrelevant in rpc mode and can be noisy/slow to load.
     // Keep extensions + prompt templates enabled because ACP users may rely on them
     // (e.g. MCP extensions, prompt templates for workflows).
-    const args = ['--mode', 'rpc', '--no-themes']
+    const args = ['--mode', 'rpc', '--no-themes', '--extension', treeExtensionPath()]
     if (params.sessionPath) args.push('--session', params.sessionPath)
 
     const child = spawn(cmd, args, {
@@ -235,6 +248,14 @@ export class PiRpcProcess {
     if (!res.success) throw new Error(`pi prompt failed: ${res.error ?? JSON.stringify(res.data)}`)
   }
 
+  async markClientMessage(clientMessageId: string): Promise<void> {
+    await this.prompt(`/${PI_ACP_MARK_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
+  }
+
+  async rewindClientMessage(clientMessageId: string): Promise<void> {
+    await this.prompt(`/${PI_ACP_REWIND_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
+  }
+
   async abort(): Promise<void> {
     const res = await this.request({ type: 'abort' })
     if (!res.success) throw new Error(`pi abort failed: ${res.error ?? JSON.stringify(res.data)}`)
@@ -258,7 +279,7 @@ export class PiRpcProcess {
     return res.data
   }
 
-  async setThinkingLevel(level: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'): Promise<void> {
+  async setThinkingLevel(level: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'): Promise<void> {
     const res = await this.request({ type: 'set_thinking_level', level })
     if (!res.success) throw new Error(`pi set_thinking_level failed: ${res.error ?? JSON.stringify(res.data)}`)
   }

@@ -1,6 +1,6 @@
-# pi-acp
+# pied ACP
 
-ACP ([Agent Client Protocol](https://agentclientprotocol.com/overview/introduction)) adapter for [`pi`](https://github.com/earendil-works/pi) coding agent (fka shitty coding agent).
+pied's ACP ([Agent Client Protocol](https://agentclientprotocol.com/overview/introduction)) adapter for [`pi`](https://github.com/earendil-works/pi) coding agent (fka shitty coding agent). The npm package and executable remain named `pi-acp` for upstream compatibility.
 
 `pi-acp` communicates **ACP JSON-RPC 2.0 over stdio** to an ACP client (e.g. Zed editor) and spawns `pi --mode rpc`, bridging requests/events between the two.
 
@@ -156,8 +156,27 @@ Loaded from:
 Other built-in commands:
 
 - `/model` - maps to model selector in Zed
-- `/thinking` - maps to 'mode' selector in Zed
+- `/thinking` - maps to the thinking selector in Zed
 - `/clear` - not implemented (use ACP client 'new' command)
+
+#### Model roles
+
+Create `~/.pi/agent/roles.json` to expose named model/thinking combinations as ACP modes:
+
+```json
+{
+  "build": {
+    "model": "openai-codex/gpt-5.6-sol",
+    "thinkingLevel": "medium"
+  },
+  "explore": {
+    "model": "openai-codex/gpt-5.3-codex-spark",
+    "thinkingLevel": "high"
+  }
+}
+```
+
+In Zed, `shift-tab` cycles roles and the profile selector shows them. Selecting a role calls Pi's `set_model` and `set_thinking_level` RPC commands.
 
 #### 3) Skill commands
 

@@ -6,9 +6,13 @@ type SessionUpdateMsg = Parameters<AgentSideConnection['sessionUpdate']>[0]
 export class FakeAgentSideConnection {
   readonly updates: SessionUpdateMsg[] = []
   readonly permissionRequests: unknown[] = []
+  readonly elicitationRequests: unknown[] = []
   nextPermissionResponse: { outcome: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' } } = {
     outcome: { outcome: 'selected', optionId: 'allow' }
   }
+  nextElicitationResponse:
+    | { action: 'accept'; content?: Record<string, string | number | boolean | string[]> }
+    | { action: 'decline' | 'cancel' } = { action: 'cancel' }
 
   async sessionUpdate(msg: SessionUpdateMsg): Promise<void> {
     this.updates.push(msg)
@@ -20,6 +24,16 @@ export class FakeAgentSideConnection {
     this.permissionRequests.push(params)
     return this.nextPermissionResponse
   }
+
+  async unstable_createElicitation(
+    params: unknown
+  ): Promise<
+    | { action: 'accept'; content?: Record<string, string | number | boolean | string[]> }
+    | { action: 'decline' | 'cancel' }
+  > {
+    this.elicitationRequests.push(params)
+    return this.nextElicitationResponse
+  }
 }
 
 export class FakePiRpcProcess {
@@ -27,7 +41,11 @@ export class FakePiRpcProcess {
 
   // spies
   readonly prompts: Array<{ message: string; attachments: unknown[] }> = []
+  readonly markedClientMessages: string[] = []
+  readonly rewoundClientMessages: string[] = []
   readonly extensionUiResponses: unknown[] = []
+  sessionStats: unknown = {}
+  commands: unknown = { commands: [] }
   abortCount = 0
 
   onEvent(handler: (ev: PiRpcEvent) => void): () => void {
@@ -43,6 +61,14 @@ export class FakePiRpcProcess {
 
   async prompt(message: string, attachments: unknown[] = []): Promise<void> {
     this.prompts.push({ message, attachments })
+  }
+
+  async markClientMessage(clientMessageId: string): Promise<void> {
+    this.markedClientMessages.push(clientMessageId)
+  }
+
+  async rewindClientMessage(clientMessageId: string): Promise<void> {
+    this.rewoundClientMessages.push(clientMessageId)
   }
 
   async abort(): Promise<void> {
@@ -63,6 +89,14 @@ export class FakePiRpcProcess {
 
   async getMessages(): Promise<any> {
     return { messages: [] }
+  }
+
+  async getSessionStats(): Promise<unknown> {
+    return this.sessionStats
+  }
+
+  async getCommands(): Promise<unknown> {
+    return this.commands
   }
 }
 

@@ -25,9 +25,16 @@ import { getAuthMethods } from './auth.js'
 import { SessionManager, type PiAcpSession } from './session.js'
 import { SessionStore } from './session-store.js'
 import { PiRpcProcess } from '../pi-rpc/process.js'
+import {
+  PI_ACP_CLIENT_MESSAGE_ID_META,
+  PI_ACP_TREE_COMMAND,
+  PI_ACP_TREE_REWIND_CAPABILITY,
+  PI_ACP_TREE_REWIND_METHOD
+} from '../pi-rpc/tree-command.js'
 import { listPiSessions, findPiSession } from './pi-sessions.js'
+import { activeUserMessageEntryIds } from './pi-session-tree.js'
 import { normalizePiAssistantText, normalizePiMessageText } from './translate/pi-messages.js'
-import { toolResultToText } from './translate/pi-tools.js'
+import { todoResultToPlanEntries, toolResultToText } from './translate/pi-tools.js'
 import {
   bashCommand,
   bashExitCode,
@@ -40,16 +47,17 @@ import {
 } from './translate/bash.js'
 import { promptToPiMessage } from './translate/prompt.js'
 import { loadSlashCommands, parseCommandArgs, toAvailableCommands } from './slash-commands.js'
-import { getAgentDir, getEnableSkillCommands, getQuietStartup } from './pi-settings.js'
+import { getAgentDir, getEnableSkillCommands, getQuietStartup, getRoles, type PiRole } from './pi-settings.js'
 import { toAvailableCommandsFromPiGetCommands } from './pi-commands.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { isAbsolute } from 'node:path'
 import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import type { AvailableCommand } from '@agentclientprotocol/sdk'
 import { join, dirname, basename } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
+import { getPiCommand, shouldUseShellForPiCommand } from '../pi-rpc/command.js'
 
-type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 type AdvertisedModel = {
   modelId: string
   name: string
@@ -57,6 +65,7 @@ type AdvertisedModel = {
 }
 
 const MODEL_CONFIG_ID = 'model'
+const ROLE_CONFIG_ID = 'role'
 const THOUGHT_LEVEL_CONFIG_ID = 'thought_level'
 
 function builtinAvailableCommands(): AvailableCommand[] {
@@ -97,6 +106,10 @@ function builtinAvailableCommands(): AvailableCommand[] {
     {
       name: 'changelog',
       description: 'Show pi changelog'
+    },
+    {
+      name: 'tree',
+      description: 'Navigate the Pi session tree and continue from an earlier point'
     }
   ]
 }
@@ -123,6 +136,9 @@ export class PiAcpAgent implements ACPAgent {
   private readonly sessions = new SessionManager()
   private readonly store = new SessionStore()
   private readonly restoringSessions = new Map<string, Promise<PiAcpSession>>()
+  private readonly autoTitlingSessions = new Set<string>()
+  private generateTitle = generateThreadTitle
+  private supportsFormElicitation = false
 
   dispose(): void {
     this.sessions.disposeAll()
@@ -213,6 +229,7 @@ export class PiAcpAgent implements ACPAgent {
         cwd,
         mcpServers: opts?.mcpServers ?? [],
         conn: this.conn,
+        supportsFormElicitation: this.supportsFormElicitation,
         proc,
         fileCommands
       })
@@ -236,12 +253,13 @@ export class PiAcpAgent implements ACPAgent {
     // We currently only support ACP protocol version 1.
     const supportedVersion = 1
     const requested = params.protocolVersion
+    this.supportsFormElicitation = params.clientCapabilities?.elicitation?.form != null
 
     return {
       protocolVersion: requested === supportedVersion ? requested : supportedVersion,
       agentInfo: {
-        name: pkg.name ?? 'pi-acp',
-        title: 'pi ACP adapter',
+        name: 'pied-acp',
+        title: 'pied ACP',
         version: pkg.version ?? '0.0.0'
       },
       // Zed currently uses ClientCapabilities._meta["terminal-auth"] to decide whether to show
@@ -261,6 +279,9 @@ export class PiAcpAgent implements ACPAgent {
           // **UNSTABLE** ACP capability used by Zed's codex-acp adapter.
           // Enables a native session picker in clients that support it.
           list: {}
+        },
+        _meta: {
+          [PI_ACP_TREE_REWIND_CAPABILITY]: true
         }
       }
     }
@@ -281,6 +302,7 @@ export class PiAcpAgent implements ACPAgent {
       cwd: params.cwd,
       mcpServers: params.mcpServers,
       conn: this.conn,
+      supportsFormElicitation: this.supportsFormElicitation,
       fileCommands,
       piCommand: process.env.PI_ACP_PI_COMMAND
     })
@@ -387,7 +409,10 @@ export class PiAcpAgent implements ACPAgent {
 
     // Try to send it immediately after session/new returns; if the client ignores it,
     // it will still be emitted as the first chunk of the first prompt.
-    if (preludeText) setTimeout(() => session.sendStartupInfoIfPending(), 0)
+    setTimeout(() => {
+      if (preludeText) session.sendStartupInfoIfPending()
+      void session.sendUsageUpdate()
+    }, 0)
 
     // Advertise slash commands (ACP: available_commands_update)
     // Important: some clients (e.g. Zed) will ignore notifications for an unknown sessionId.
@@ -445,6 +470,31 @@ export class PiAcpAgent implements ACPAgent {
       const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space)
       const argsString = space === -1 ? '' : trimmed.slice(space + 1)
       const args = parseCommandArgs(argsString)
+
+      if (cmd === 'tree') {
+        try {
+          const data = (await session.proc.getCommands()) as {
+            commands?: Array<{ name?: unknown }>
+          }
+          const commandAvailable = data.commands?.some(command => command.name === PI_ACP_TREE_COMMAND) ?? false
+          if (!commandAvailable) {
+            throw new Error('The bundled Pi tree extension did not load.')
+          }
+
+          await session.proc.prompt(`/${PI_ACP_TREE_COMMAND}`)
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error)
+          await this.conn.sessionUpdate({
+            sessionId: session.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `Tree navigation failed: ${message}` }
+            }
+          })
+        }
+
+        return { stopReason: 'end_turn' }
+      }
 
       if (cmd === 'compact') {
         const customInstructions = args.join(' ').trim() || undefined
@@ -879,7 +929,12 @@ export class PiAcpAgent implements ACPAgent {
       }
     }
 
-    const result = await session.prompt(message, images)
+    const clientMessageId =
+      typeof params._meta?.[PI_ACP_CLIENT_MESSAGE_ID_META] === 'string'
+        ? params._meta[PI_ACP_CLIENT_MESSAGE_ID_META]
+        : undefined
+    void this.autoTitleFirstMessage(session, message)
+    const result = await session.prompt(message, images, clientMessageId)
 
     // ACP StopReason does not include "error"; if pi fails we map to end_turn for now,
     // unless we know this was a cancellation.
@@ -889,10 +944,65 @@ export class PiAcpAgent implements ACPAgent {
     return { stopReason }
   }
 
+  private async autoTitleFirstMessage(session: PiAcpSession, message: string): Promise<void> {
+    if (this.autoTitlingSessions.has(session.sessionId)) return
+    this.autoTitlingSessions.add(session.sessionId)
+
+    try {
+      const [state, data] = (await Promise.all([session.proc.getState(), session.proc.getMessages()])) as [any, any]
+      if (typeof state?.sessionName === 'string' && state.sessionName.trim()) return
+
+      const messages = Array.isArray(data?.messages) ? data.messages : []
+      if (messages.some((message: any) => message?.role === 'user')) return
+
+      const provider = String(state?.model?.provider ?? '').trim()
+      const modelId = String(state?.model?.id ?? '').trim()
+      if (!provider || !modelId) return
+
+      const title = await this.generateTitle({
+        cwd: session.cwd,
+        model: `${provider}/${modelId}`,
+        user: message
+      })
+      if (!title) return
+
+      const latestState = (await session.proc.getState()) as any
+      if (typeof latestState?.sessionName === 'string' && latestState.sessionName.trim()) return
+
+      await session.proc.setSessionName(title)
+      await this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: 'session_info_update',
+          title,
+          updatedAt: new Date().toISOString()
+        }
+      })
+    } catch {
+      // Automatic titles are optional and must never affect the conversation.
+    }
+  }
+
   async cancel(params: CancelNotification): Promise<void> {
     const session = this.sessions.maybeGet(params.sessionId)
     if (!session) return
     await session.cancel()
+  }
+
+  async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (method !== PI_ACP_TREE_REWIND_METHOD) {
+      throw RequestError.methodNotFound(method)
+    }
+
+    const sessionId = typeof params.sessionId === 'string' ? params.sessionId : null
+    const clientMessageId = typeof params.clientMessageId === 'string' ? params.clientMessageId : null
+    if (!sessionId || !clientMessageId) {
+      throw RequestError.invalidParams('sessionId and clientMessageId are required.')
+    }
+
+    const session = await this.restoreSession(sessionId)
+    await session.proc.rewindClientMessage(clientMessageId)
+    return { rewound: true }
   }
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
@@ -963,6 +1073,9 @@ export class PiAcpAgent implements ACPAgent {
     // Replay full conversation history.
     const data = (await proc.getMessages()) as any
     const messages = Array.isArray(data?.messages) ? data.messages : []
+    const userMessageEntryIds = activeUserMessageEntryIds(stored.sessionFile)
+    let userMessageIndex = 0
+    let todoPlan: ReturnType<typeof todoResultToPlanEntries>
 
     for (const m of messages) {
       const role = String(m?.role ?? '')
@@ -970,14 +1083,26 @@ export class PiAcpAgent implements ACPAgent {
       if (role === 'user') {
         const text = normalizePiMessageText(m?.content)
         if (text) {
+          const messageId = userMessageEntryIds[userMessageIndex]
           await this.conn.sessionUpdate({
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'user_message_chunk',
-              content: { type: 'text', text }
+              content: { type: 'text', text },
+              ...(messageId
+                ? {
+                    messageId,
+                    _meta: {
+                      piAcp: {
+                        clientMessageId: messageId
+                      }
+                    }
+                  }
+                : {})
             }
           })
         }
+        userMessageIndex += 1
       }
 
       if (role === 'assistant') {
@@ -995,6 +1120,7 @@ export class PiAcpAgent implements ACPAgent {
 
       if (role === 'toolResult') {
         const toolName = String((m as any)?.toolName ?? 'tool')
+        if (toolName === 'todo') todoPlan = todoResultToPlanEntries(m) ?? todoPlan
         const toolCallId = String((m as any)?.toolCallId ?? crypto.randomUUID())
         const isError = Boolean((m as any)?.isError)
         const isBash = isBashTool(toolName)
@@ -1055,6 +1181,13 @@ export class PiAcpAgent implements ACPAgent {
           }
         })
       }
+    }
+
+    if (todoPlan) {
+      await this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: { sessionUpdate: 'plan', entries: todoPlan }
+      })
     }
 
     const { configOptions, models, modes } = await getSessionConfiguration(proc)
@@ -1145,6 +1278,20 @@ export class PiAcpAgent implements ACPAgent {
 
     if (configId === MODEL_CONFIG_ID) {
       await setSessionModel(session.proc, params.value)
+    } else if (configId === ROLE_CONFIG_ID) {
+      const role = getRoles().find(role => role.id === params.value)
+      if (!role) throw RequestError.invalidParams(`Unknown role: ${params.value}`)
+
+      await setSessionModel(session.proc, role.model)
+      await session.proc.setThinkingLevel(role.thinkingLevel)
+
+      void this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: 'current_mode_update',
+          currentModeId: role.thinkingLevel
+        }
+      })
     } else if (configId === THOUGHT_LEVEL_CONFIG_ID) {
       if (!isThinkingLevel(params.value)) {
         throw RequestError.invalidParams(`Unknown thinking level: ${params.value}`)
@@ -1169,7 +1316,7 @@ export class PiAcpAgent implements ACPAgent {
 }
 
 function isThinkingLevel(x: string): x is ThinkingLevel {
-  return x === 'off' || x === 'minimal' || x === 'low' || x === 'medium' || x === 'high' || x === 'xhigh'
+  return x === 'off' || x === 'minimal' || x === 'low' || x === 'medium' || x === 'high' || x === 'xhigh' || x === 'max'
 }
 
 async function getThinkingState(
@@ -1199,7 +1346,7 @@ async function getThinkingState(
   const tl = typeof state?.thinkingLevel === 'string' ? state.thinkingLevel : null
   if (tl && isThinkingLevel(tl)) current = tl
 
-  const available: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+  const available: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
   return {
     currentModeId: current,
@@ -1232,7 +1379,7 @@ async function getSessionConfiguration(
   const [models, modes] = await Promise.all([getModelState(proc, pre), getThinkingState(proc, { state: pre?.state })])
 
   return {
-    configOptions: buildConfigOptions({ models, modes }),
+    configOptions: buildConfigOptions({ models, modes, roles: getRoles() }),
     models,
     modes
   }
@@ -1243,6 +1390,7 @@ function buildConfigOptions(state: {
     availableModels: AdvertisedModel[]
     currentModelId: string
   } | null
+  roles: PiRole[]
   modes: {
     availableModes: Array<{
       id: string
@@ -1280,6 +1428,25 @@ function buildConfigOptions(state: {
         value: model.modelId,
         name: model.name,
         description: model.description ?? null
+      }))
+    })
+  }
+
+  if (state.roles.length) {
+    const currentRole = state.roles.find(
+      role => role.model === state.models?.currentModelId && role.thinkingLevel === state.modes.currentModeId
+    )
+    configOptions.unshift({
+      type: 'select',
+      id: ROLE_CONFIG_ID,
+      category: 'mode',
+      name: 'Role',
+      description: 'Switch model and thinking level together',
+      currentValue: currentRole?.id ?? '',
+      options: state.roles.map(role => ({
+        value: role.id,
+        name: role.id,
+        description: `${role.model} · Thinking: ${role.thinkingLevel}`
       }))
     })
   }
@@ -1402,6 +1569,56 @@ async function setSessionModel(proc: PiRpcProcess, requestedModelId: string): Pr
   }
 
   await proc.setModel(provider, modelId)
+}
+
+function normalizeGeneratedTitle(output: string): string | null {
+  const line = output
+    .trim()
+    .split(/\r?\n/)
+    .find(Boolean)
+    ?.replace(/^#+\s*/, '')
+    .replace(/^title:\s*/i, '')
+    .replace(/^["'`]+|["'`.,:;!?]+$/g, '')
+    .trim()
+  if (!line) return null
+
+  const words = line.split(/\s+/).slice(0, 6)
+  if (words.length === 1) words.push('Discussion')
+  return words.join(' ')
+}
+
+async function generateThreadTitle(params: { cwd: string; model: string; user: string }): Promise<string | null> {
+  const prompt = [
+    'Create a concise 2-6 word title for this conversation.',
+    'Return only the title, without quotes or punctuation.',
+    '',
+    `User: ${params.user.slice(0, 4000)}`
+  ].join('\n')
+
+  return await new Promise(resolve => {
+    execFile(
+      getPiCommand(process.env.PI_ACP_PI_COMMAND),
+      [
+        '--print',
+        '--no-session',
+        '--no-tools',
+        '--no-extensions',
+        '--model',
+        params.model,
+        '--thinking',
+        'off',
+        prompt
+      ],
+      {
+        cwd: params.cwd,
+        encoding: 'utf8',
+        timeout: 30_000,
+        maxBuffer: 16_384,
+        shell: shouldUseShellForPiCommand(getPiCommand(process.env.PI_ACP_PI_COMMAND))
+      },
+      (error, stdout) => resolve(error ? null : normalizeGeneratedTitle(stdout))
+    )
+  })
 }
 
 function isSemver(v: string): boolean {

@@ -71,7 +71,7 @@ test('PiAcpAgent: quietStartup=true disables startup info generation/emission', 
       assert.equal(timeouts.length, 2)
     } else {
       assert.equal(setStartupInfoCalled, false)
-      assert.equal(timeouts.length, 1)
+      assert.equal(timeouts.length, 2)
     }
   } finally {
     ;(globalThis as any).setTimeout = realSetTimeout

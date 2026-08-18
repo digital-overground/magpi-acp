@@ -26,7 +26,7 @@ class FakeSessions {
 
 test('PiAcpAgent: prompt auto-restores a missing session from SessionStore', async () => {
   const conn = new FakeAgentSideConnection()
-  const promptCalls: Array<{ message: string; images: unknown[] }> = []
+  const promptCalls: Array<{ message: string; images: unknown[]; clientMessageId?: string }> = []
   const spawnCalls: any[] = []
   const storeUpserts: any[] = []
 
@@ -34,8 +34,8 @@ test('PiAcpAgent: prompt auto-restores a missing session from SessionStore', asy
     sessionId,
     cwd: params.cwd,
     proc: params.proc,
-    async prompt(message: string, images: unknown[]) {
-      promptCalls.push({ message, images })
+    async prompt(message: string, images: unknown[], clientMessageId?: string) {
+      promptCalls.push({ message, images, clientMessageId })
       return 'end_turn'
     },
     async cancel() {},
@@ -72,7 +72,8 @@ test('PiAcpAgent: prompt auto-restores a missing session from SessionStore', asy
 
     const result = await agent.prompt({
       sessionId: 'stored-session',
-      prompt: [{ type: 'text', text: 'hello again' }]
+      prompt: [{ type: 'text', text: 'hello again' }],
+      _meta: { 'pi-acp/client-message-id': 'zed-message-1' }
     } as any)
 
     assert.equal(result.stopReason, 'end_turn')
@@ -83,7 +84,7 @@ test('PiAcpAgent: prompt auto-restores a missing session from SessionStore', asy
         piCommand: process.env.PI_ACP_PI_COMMAND
       }
     ])
-    assert.deepEqual(promptCalls, [{ message: 'hello again', images: [] }])
+    assert.deepEqual(promptCalls, [{ message: 'hello again', images: [], clientMessageId: 'zed-message-1' }])
     assert.deepEqual(storeUpserts, [
       {
         sessionId: 'stored-session',
