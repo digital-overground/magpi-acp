@@ -6,10 +6,7 @@ A customized [Agent Client Protocol](https://agentclientprotocol.com) adapter fo
 Zed → magpi-acp → Pi RPC → selected model
 ```
 
-The adapter speaks ACP JSON-RPC over stdio and runs Pi in `--mode rpc`. It is independently versioned from [`svkozak/pi-acp`](https://github.com/svkozak/pi-acp), the upstream project from which it was derived. The npm package and executable are named `magpi-acp`.
-
-MagPi ACP is an independent open-source project and is not affiliated with Raspberry Pi Ltd or its former _The MagPi_ magazine.
-
+The adapter speaks ACP JSON-RPC over stdio and runs Pi in `--mode rpc`. 
 ## Features
 
 - Streams assistant text and thought output into native ACP content.
@@ -191,6 +188,11 @@ Project layout:
 - Pi reads, writes, and executes locally; ACP filesystem and terminal delegation are not implemented.
 - MCP servers supplied by the ACP client are retained in session state but not forwarded to Pi.
 - UI-only Pi extensions require ACP translation to render natively in Zed.
+
+##Attributution
+
+It is independently versioned from [`svkozak/pi-acp`](https://github.com/svkozak/pi-acp), the upstream project from which it was derived. The npm package and executable are named `magpi-acp`.
+
 
 ## License
 
