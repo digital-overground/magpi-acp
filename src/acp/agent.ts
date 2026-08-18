@@ -1587,7 +1587,11 @@ function normalizeGeneratedTitle(output: string): string | null {
   return words.join(' ')
 }
 
-async function generateThreadTitle(params: { cwd: string; model: string; user: string }): Promise<string | null> {
+export async function generateThreadTitle(params: {
+  cwd: string
+  model: string
+  user: string
+}): Promise<string | null> {
   const prompt = [
     'Create a concise 2-6 word title for this conversation.',
     'Return only the title, without quotes or punctuation.',
@@ -1596,7 +1600,7 @@ async function generateThreadTitle(params: { cwd: string; model: string; user: s
   ].join('\n')
 
   return await new Promise(resolve => {
-    execFile(
+    const child = execFile(
       getPiCommand(process.env.PI_ACP_PI_COMMAND),
       [
         '--print',
@@ -1612,12 +1616,13 @@ async function generateThreadTitle(params: { cwd: string; model: string; user: s
       {
         cwd: params.cwd,
         encoding: 'utf8',
-        timeout: 30_000,
+        timeout: 15_000,
         maxBuffer: 16_384,
         shell: shouldUseShellForPiCommand(getPiCommand(process.env.PI_ACP_PI_COMMAND))
       },
       (error, stdout) => resolve(error ? null : normalizeGeneratedTitle(stdout))
     )
+    child.stdin?.end()
   })
 }
 

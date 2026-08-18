@@ -1,8 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PiAcpAgent } from '../../src/acp/agent.js'
+import { PiAcpAgent, generateThreadTitle } from '../../src/acp/agent.js'
 import { PI_ACP_TREE_COMMAND, PI_ACP_TREE_REWIND_METHOD } from '../../src/pi-rpc/tree-command.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 class FakeSessions {
   constructor(private readonly session: any) {}
@@ -65,6 +68,7 @@ test('PiAcpAgent: automatically names a thread from its first user message', asy
   const proc = new FakePiRpcProcess() as any
   let sessionName: string | undefined
   let titleRequest: any
+  const sequence: string[] = []
   let titleApplied!: () => void
   const applied = new Promise<void>(resolve => {
     titleApplied = resolve
@@ -76,6 +80,7 @@ test('PiAcpAgent: automatically names a thread from its first user message', asy
   })
   proc.getMessages = async () => ({ messages: [] })
   proc.setSessionName = async (name: string) => {
+    sequence.push('name')
     sessionName = name
     titleApplied()
   }
@@ -85,12 +90,16 @@ test('PiAcpAgent: automatically names a thread from its first user message', asy
     cwd: process.cwd(),
     proc,
     fileCommands: [],
-    prompt: async () => 'end_turn',
+    prompt: async () => {
+      sequence.push('prompt')
+      return 'end_turn'
+    },
     wasCancelRequested: () => false
   }
   const agent = new PiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = new FakeSessions(session) as any
   ;(agent as any).generateTitle = async (request: any) => {
+    sequence.push('generate')
     titleRequest = request
     return 'Fix Login Cache Bug'
   }
@@ -102,11 +111,35 @@ test('PiAcpAgent: automatically names a thread from its first user message', asy
   await applied
   await new Promise(resolve => setImmediate(resolve))
 
+  assert.deepEqual(sequence, ['prompt', 'generate', 'name'])
   assert.equal(titleRequest.model, 'openai-codex/gpt-5.6-sol')
   assert.equal(titleRequest.user, 'fix the login caching bug')
   assert.equal(sessionName, 'Fix Login Cache Bug')
   const info = conn.updates.find(update => (update as any).update?.sessionUpdate === 'session_info_update')
   assert.equal((info as any)?.update?.title, 'Fix Login Cache Bug')
+})
+
+test('generateThreadTitle closes stdin so Pi can process the prompt', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pied-title-'))
+  const command = join(dir, 'fake-pi')
+  const previousCommand = process.env.PI_ACP_PI_COMMAND
+  writeFileSync(
+    command,
+    '#!/usr/bin/env node\nprocess.stdin.resume()\nprocess.stdin.on("end", () => console.log("One Two Three Four Five Six Seven"))\n'
+  )
+  chmodSync(command, 0o755)
+  process.env.PI_ACP_PI_COMMAND = command
+
+  try {
+    assert.equal(
+      await generateThreadTitle({ cwd: dir, model: 'test/model', user: 'test prompt' }),
+      'One Two Three Four Five Six'
+    )
+  } finally {
+    if (previousCommand === undefined) delete process.env.PI_ACP_PI_COMMAND
+    else process.env.PI_ACP_PI_COMMAND = previousCommand
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('PiAcpAgent: /tree invokes the bundled Pi tree command adapter-side', async () => {
