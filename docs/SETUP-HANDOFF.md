@@ -21,7 +21,7 @@ Zed → pied-acp (ACP ↔ Pi RPC adapter) → Pi → selected model
 
 Versions at handoff: Zed 1.15.0, Pi 0.84.2, Node 26.6.0, npm 12.0.2.
 
-Package snapshot: `rpiv-todo` 2.5.1, `pi-ask-user` 0.14.0, `pi-linear-tools` 0.7.3, `pi-session-recall` 1.0.6, Tavily 0.1.2, Ponytail commit `2ed6c52`, Matt Pocock skills commit `8b78b53`, and private skills commit `dc6672d`.
+Package snapshot: `rpiv-todo` 2.5.1, `pi-ask-user` 0.14.0, Tavily 0.1.2, Ponytail commit `2ed6c52`, and Matt Pocock skills commit `8b78b53`.
 
 ## Install the core
 
@@ -32,7 +32,7 @@ Package snapshot: `rpiv-todo` 2.5.1, `pi-ask-user` 0.14.0, `pi-linear-tools` 0.7
 ```
 
 ```sh
-brew install git gh node ripgrep
+brew install git gh node
 ```
 
 ```sh
@@ -100,30 +100,14 @@ Key skills used most often:
 - [`tdd`](https://github.com/mattpocock/skills/tree/main/skills/engineering/tdd): red-green-refactor when requested.
 - The `ask-user` skill bundled with [`pi-ask-user`](https://github.com/edlsh/pi-ask-user) gates ambiguous or high-stakes decisions.
 
-### Optional integrations currently installed
+### Web integration
 
-| Package/tool | Use | Link |
+| Package | Use | Link |
 | --- | --- | --- |
 | `@tavily/pi-extension` | `web_search` and `web_fetch`; requires `TAVILY_API_KEY` | [npm](https://www.npmjs.com/package/@tavily/pi-extension) · [Tavily](https://tavily.com) |
-| `@fink-andreas/pi-linear-tools` | Linear issue, project, update, team, and milestone tools | [npm](https://www.npmjs.com/package/@fink-andreas/pi-linear-tools) · [source](https://github.com/fink-andreas/pi-linear-tools) |
-| `@ogulcancelik/pi-session-recall` | Search and query previous Pi sessions | [npm](https://www.npmjs.com/package/@ogulcancelik/pi-session-recall) · [source](https://github.com/ogulcancelik/pi-extensions/tree/main/packages/pi-session-recall) |
-| `kylehumphrey-ao/skills` | Private custom skills, currently including `stubble` | [private repository](https://github.com/kylehumphrey-ao/skills) |
-| ripgrep | Fast backend for session recall | [source](https://github.com/BurntSushi/ripgrep) |
 
 ```sh
 pi install npm:@tavily/pi-extension
-```
-
-```sh
-pi install npm:@fink-andreas/pi-linear-tools
-```
-
-```sh
-pi install npm:@ogulcancelik/pi-session-recall
-```
-
-```sh
-pi install git:git@github.com:kylehumphrey-ao/skills
 ```
 
 ## Pi configuration
@@ -137,10 +121,7 @@ Create `~/.pi/agent/settings.json`:
     "npm:pi-ask-user",
     "git:github.com/DietrichGebert/ponytail",
     "git:github.com/mattpocock/skills",
-    "npm:@tavily/pi-extension",
-    "npm:@fink-andreas/pi-linear-tools",
-    "npm:@ogulcancelik/pi-session-recall",
-    "git:git@github.com:kylehumphrey-ao/skills"
+    "npm:@tavily/pi-extension"
   ],
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-terra",
@@ -178,8 +159,7 @@ Each developer must authenticate independently. Never copy `~/.pi/agent/auth.jso
 
 - Configure the OpenAI Codex provider through Pi's authentication flow.
 - Set `TAVILY_API_KEY` in the environment that launches Zed/Pi if using Tavily.
-- Run `/linear-tools-config` in a terminal Pi session to configure the developer's own Linear account and team.
-- Grant the developer access to the private `pied-acp` and private skills repositories.
+- Grant the developer access to the private `pied-acp` repository.
 
 ## Stock Zed configuration
 
