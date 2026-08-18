@@ -14,14 +14,36 @@ Zed → pied-acp (ACP ↔ Pi RPC adapter) → Pi → selected model
 | Pi | Coding-agent runtime | [GitHub](https://github.com/earendil-works/pi-mono) · [npm](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) · [pi.dev](https://pi.dev) |
 | pied-acp | Customized ACP adapter | [kylehumphrey-ao/pied-acp](https://github.com/kylehumphrey-ao/pied-acp) (private; collaborator access required) |
 | ACP | Protocol used between Zed and the adapter | [agentclientprotocol.com](https://agentclientprotocol.com) |
+| Homebrew | Installs the macOS toolchain | [brew.sh](https://brew.sh) |
 | Node.js 22+ | Runs Pi and pied-acp | [nodejs.org](https://nodejs.org) |
 | Git | Clones the private adapter and Git-based Pi packages | [git-scm.com](https://git-scm.com) |
+| GitHub CLI | Authenticates and clones private GitHub repositories | [cli.github.com](https://cli.github.com) |
 
 Versions at handoff: Zed 1.15.0, Pi 0.84.2, Node 26.6.0, npm 12.0.2.
 
 Package snapshot: `rpiv-todo` 2.5.1, `pi-ask-user` 0.14.0, `pi-linear-tools` 0.7.3, `pi-session-recall` 1.0.6, Tavily 0.1.2, Ponytail commit `2ed6c52`, Matt Pocock skills commit `8b78b53`, and private skills commit `dc6672d`.
 
 ## Install the core
+
+### Homebrew bootstrap
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+```sh
+brew install git gh node ripgrep
+```
+
+```sh
+brew install --cask zed
+```
+
+```sh
+gh auth login
+```
+
+### Pi and pied-acp
 
 ```sh
 npm install -g @earendil-works/pi-coding-agent
