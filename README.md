@@ -30,7 +30,7 @@ MagPi ACP speaks ACP JSON-RPC over stdio and runs Pi in `--mode rpc`.
 - Pi installed and available on `PATH`
 - A model provider configured through Pi
 
-## Install
+## Install from GitHub
 
 Install Pi first:
 
@@ -38,19 +38,7 @@ Install Pi first:
 npm install -g @earendil-works/pi-coding-agent
 ```
 
-Run MagPi ACP directly with npx:
-
-```sh
-npx -y magpi-acp
-```
-
-Or install it globally:
-
-```sh
-npm install -g magpi-acp
-```
-
-### From source
+Clone and build MagPi ACP:
 
 ```sh
 git clone https://github.com/kylehumphrey-ao/magpi-acp.git
@@ -60,20 +48,28 @@ git clone https://github.com/kylehumphrey-ao/magpi-acp.git
 cd magpi-acp && npm ci && npm test && npm run build
 ```
 
-Run `node dist/index.js` as the ACP agent process.
-
 ## ACP client configuration
 
-Configure your ACP client to launch this stdio process:
+Configure your ACP client to launch the built stdio process, replacing the absolute path:
 
 ```json
 {
-  "command": "npx",
-  "args": ["-y", "magpi-acp"]
+  "command": "node",
+  "args": ["/absolute/path/to/magpi-acp/dist/index.js"]
 }
 ```
 
-The exact configuration format depends on the client. Restart the agent process after upgrading MagPi ACP or changing roles.
+The exact configuration format depends on the client.
+
+## Update
+
+Pull, install any dependency changes, and rebuild:
+
+```sh
+cd /absolute/path/to/magpi-acp && git pull --ff-only && npm ci && npm run build
+```
+
+Source changes are not hot-reloaded. Restart the ACP agent process or open a new session after rebuilding.
 
 ## Optional Pi extensions
 
@@ -146,7 +142,7 @@ Set `MAGPI_ACP_PI_COMMAND` to override the `pi` executable path.
 MagPi ACP advertises Terminal Auth in its ACP initialize response. To configure Pi interactively:
 
 ```sh
-npx -y magpi-acp --terminal-login
+node /absolute/path/to/magpi-acp/dist/index.js --terminal-login
 ```
 
 Credentials remain managed by Pi and are not stored by MagPi ACP.
