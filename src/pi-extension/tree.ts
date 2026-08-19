@@ -286,7 +286,7 @@ export default function registerMagPiAcpTree(pi: PiExtensionApi): void {
 
       const destination = selected.isUserMessage ? `before “${selected.description}”` : `at “${selected.description}”`
       ctx.ui.notify(
-        `Pi's active context moved ${destination}. Messages from the abandoned branch remain visible in this Zed view, but Pi will no longer receive them. Reopen the thread to replay only the active branch.`,
+        `Pi's active context moved ${destination}. Messages from the abandoned branch may remain visible in the client, but Pi will no longer receive them. Reload the session to replay only the active branch.`,
         'info'
       )
     }

@@ -262,8 +262,7 @@ export class MagPiAcpAgent implements ACPAgent {
         title: 'MagPi ACP',
         version: pkg.version ?? '0.0.0'
       },
-      // Zed currently uses ClientCapabilities._meta["terminal-auth"] to decide whether to show
-      // the "Authenticate" banner/button. If not supported, we still return the method for the registry.
+      // Include launch metadata only when the client advertises integrated terminal authentication.
       authMethods: getAuthMethods({
         supportsTerminalAuthMeta: (params as any)?.clientCapabilities?._meta?.['terminal-auth'] === true
       }),
@@ -276,8 +275,7 @@ export class MagPiAcpAgent implements ACPAgent {
           embeddedContext: process.env.MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT === 'true'
         },
         sessionCapabilities: {
-          // **UNSTABLE** ACP capability used by Zed's codex-acp adapter.
-          // Enables a native session picker in clients that support it.
+          // **UNSTABLE** ACP capability for native session pickers.
           list: {}
         },
         _meta: {
@@ -414,9 +412,7 @@ export class MagPiAcpAgent implements ACPAgent {
       void session.sendUsageUpdate()
     }, 0)
 
-    // Advertise slash commands (ACP: available_commands_update)
-    // Important: some clients (e.g. Zed) will ignore notifications for an unknown sessionId.
-    // So we must send this *after* the session/new response has been delivered.
+    // Advertise slash commands after session/new so clients recognize the session ID.
     setTimeout(() => {
       void (async () => {
         try {
@@ -1006,9 +1002,7 @@ export class MagPiAcpAgent implements ACPAgent {
   }
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
-    // ACP: filter by cwd if provided.
-    // Zed currently sends `{}` (no cwd), so we default to the last session cwd to
-    // emulate pi's `/resume` picker (project-scoped).
+    // Filter by cwd when provided; otherwise use the latest session cwd for a project-scoped picker.
     const all = listPiSessions()
 
     const effectiveCwd = (params as any).cwd ?? this.lastSessionCwd
@@ -1059,7 +1053,7 @@ export class MagPiAcpAgent implements ACPAgent {
     const proc = session.proc
     const fileCommands = loadSlashCommands(params.cwd)
 
-    // Policy: within a single ACP connection (one Zed window), keep only one live pi subprocess.
+    // Keep only one live Pi subprocess within an ACP connection.
     // (Tests sometimes stub out `this.sessions`, so guard the call.)
     ;(this.sessions as any).closeAllExcept?.(session.sessionId)
 

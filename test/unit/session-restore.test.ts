@@ -73,7 +73,7 @@ test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', 
     const result = await agent.prompt({
       sessionId: 'stored-session',
       prompt: [{ type: 'text', text: 'hello again' }],
-      _meta: { 'magpi-acp/client-message-id': 'zed-message-1' }
+      _meta: { 'magpi-acp/client-message-id': 'client-message-1' }
     } as any)
 
     assert.equal(result.stopReason, 'end_turn')
@@ -84,7 +84,7 @@ test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', 
         piCommand: process.env.MAGPI_ACP_PI_COMMAND
       }
     ])
-    assert.deepEqual(promptCalls, [{ message: 'hello again', images: [], clientMessageId: 'zed-message-1' }])
+    assert.deepEqual(promptCalls, [{ message: 'hello again', images: [], clientMessageId: 'client-message-1' }])
     assert.deepEqual(storeUpserts, [
       {
         sessionId: 'stored-session',

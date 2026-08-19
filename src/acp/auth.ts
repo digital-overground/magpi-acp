@@ -3,12 +3,8 @@ import type { AuthMethod } from '@agentclientprotocol/sdk'
 export const PI_SETUP_METHOD_ID = 'pi_terminal_login'
 
 /**
- * Zed (and some other clients) currently support "Terminal Auth" via an extension field
- * in AuthMethod._meta, rather than the RFD "type/args/env" shape.
- *
- * We include BOTH for maximum compatibility:
- *  - `_meta["terminal-auth"]`: used by Zed to render the "Authenticate" banner + button.
- *  - `type/args/env`: registry-required shape.
+ * Return standard Terminal Auth fields plus the optional metadata used by clients
+ * that support launching authentication in an integrated terminal.
  */
 export function getAuthMethods(opts?: { supportsTerminalAuthMeta?: boolean }): AuthMethod[] {
   const supportsTerminalAuthMeta = opts?.supportsTerminalAuthMeta ?? true
@@ -25,8 +21,7 @@ export function getAuthMethods(opts?: { supportsTerminalAuthMeta?: boolean }): A
   }
 
   if (supportsTerminalAuthMeta) {
-    // Best-effort launch spec for Zed's terminal-auth banner.
-    // Zed expects a full command+args (see mistral-vibe implementation).
+    // Best-effort launch spec for clients with integrated terminal authentication.
     const launch = terminalAuthLaunchSpec()
 
     method._meta = {
@@ -43,7 +38,7 @@ export function getAuthMethods(opts?: { supportsTerminalAuthMeta?: boolean }): A
 
 function terminalAuthLaunchSpec(): { command: string; args: string[] } {
   // If we were launched as `node /path/to/dist/index.js`, reuse that.
-  // This is the most reliable in local dev and custom Zed configurations.
+  // This is the most reliable path for local source configurations.
   const argv0 = process.argv[0] || 'node'
   const argv1 = process.argv[1]
   if (argv1 && argv0) {

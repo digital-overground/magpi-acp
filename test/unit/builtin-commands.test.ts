@@ -184,9 +184,9 @@ test('MagPiAcpAgent: tree rewind extension method delegates to Pi', async () => 
 
   const response = await agent.extMethod(MAGPI_ACP_TREE_REWIND_METHOD, {
     sessionId: 's1',
-    clientMessageId: 'zed-message-1'
+    clientMessageId: 'client-message-1'
   })
 
   assert.deepEqual(response, { rewound: true })
-  assert.deepEqual(proc.rewoundClientMessages, ['zed-message-1'])
+  assert.deepEqual(proc.rewoundClientMessages, ['client-message-1'])
 })

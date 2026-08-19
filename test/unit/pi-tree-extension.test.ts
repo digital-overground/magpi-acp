@@ -27,7 +27,7 @@ function loadTreeCommand(): RegisteredCommand {
   return registeredCommand
 }
 
-test('Pi tree extension maps a Zed message ID and rewinds with native tree navigation', async () => {
+test('Pi tree extension maps an ACP client message ID and rewinds with native tree navigation', async () => {
   const commands = new Map<string, RegisteredCommand>()
   let turnStart: ((event: unknown, context: any) => void | Promise<void>) | undefined
   const customEntries: Array<{ customType: string; data: unknown }> = []
@@ -50,18 +50,18 @@ test('Pi tree extension maps a Zed message ID and rewinds with native tree navig
   assert.ok(rewind)
   assert.ok(turnStart)
 
-  await mark.handler('zed-message-1', {} as any)
+  await mark.handler('client-message-1', {} as any)
   await turnStart({}, { sessionManager: { getLeafId: () => 'pi-user-1' } })
 
   assert.deepEqual(customEntries, [
     {
       customType: 'magpi-acp-client-message',
-      data: { clientMessageId: 'zed-message-1', userEntryId: 'pi-user-1' }
+      data: { clientMessageId: 'client-message-1', userEntryId: 'pi-user-1' }
     }
   ])
 
   const navigations: Array<{ targetId: string; options: unknown }> = []
-  await rewind.handler('zed-message-1', {
+  await rewind.handler('client-message-1', {
     waitForIdle: async () => {},
     sessionManager: {
       getEntries: () => [
@@ -70,7 +70,7 @@ test('Pi tree extension maps a Zed message ID and rewinds with native tree navig
           parentId: 'pi-user-1',
           type: 'custom',
           customType: 'magpi-acp-client-message',
-          data: { clientMessageId: 'zed-message-1', userEntryId: 'pi-user-1' }
+          data: { clientMessageId: 'client-message-1', userEntryId: 'pi-user-1' }
         }
       ],
       getEntry: () => undefined
@@ -162,7 +162,7 @@ test('Pi tree extension navigates to a selected user message without summarizing
     }
   ])
   assert.match(notifications.at(-1) ?? '', /active context moved before/i)
-  assert.match(notifications.at(-1) ?? '', /remain visible in this Zed view/i)
+  assert.match(notifications.at(-1) ?? '', /remain visible in the client/i)
   assert.equal(
     treeOptions.some(option => option.includes('↳')),
     false

@@ -85,8 +85,8 @@ export function bashTerminalContent(toolCallId: string): ToolCallContent[] {
 }
 
 export function bashTerminalInfoMeta(toolCallId: string, cwd: string) {
-  // Zed renders ACP `execute` tools as display-only terminals when paired with
-  // terminal content plus terminal metadata. See ACP execute tool schema:
+  // ACP clients can render `execute` tools as terminals when paired with
+  // terminal content and metadata. See the execute tool schema:
   // https://agentclientprotocol.com/protocol/schema#param-execute
   return { terminal_info: { terminal_id: toolCallId, cwd } }
 }

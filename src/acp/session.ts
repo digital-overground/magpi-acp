@@ -357,11 +357,7 @@ export class MagPiAcpSession {
     this.startupInfoSent = false
   }
 
-  /**
-   * Best-effort attempt to send startup info outside of a prompt turn.
-   * Some clients (e.g. Zed) may only render agent messages once the UI is ready;
-   * callers can invoke this shortly after session/new returns.
-   */
+  /** Best-effort attempt to send startup info after the client creates its session UI. */
   sendStartupInfoIfPending(): void {
     if (this.startupInfoSent || !this.startupInfo) return
     this.startupInfoSent = true
@@ -392,8 +388,7 @@ export class MagPiAcpSession {
       if (this.pendingTurn) {
         this.turnQueue.push(queued)
 
-        // Best-effort: notify client that a prompt was queued.
-        // This doesn't work in Zed yet, needs to be revisited
+        // Best-effort: notify the client that a prompt was queued.
         this.emit({
           sessionUpdate: 'agent_message_chunk',
           content: {
@@ -588,7 +583,7 @@ export class MagPiAcpSession {
           break
         }
 
-        // Surface tool calls ASAP so clients (e.g. Zed) can show a tool-in-use/loading UI
+        // Surface tool calls immediately so clients can show a loading state.
         // while the model is still streaming tool call args.
         if (ame?.type === 'toolcall_start' || ame?.type === 'toolcall_delta' || ame?.type === 'toolcall_end') {
           const toolCall =
