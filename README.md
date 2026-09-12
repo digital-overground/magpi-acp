@@ -26,36 +26,31 @@ MagPi ACP speaks ACP JSON-RPC over stdio and runs Pi in `--mode rpc`.
 
 ## Requirements
 
-- Node.js 20+
-- Pi installed and available on `PATH`
-- A model provider configured through Pi
+Install these on the machine where MagPi ACP runs:
 
-## Install from GitHub
+- [Node.js](https://nodejs.org/) 22 or newer. `npm` is included with Node.js.
+- [Pi](https://github.com/earendil-works/pi-mono), installed as `pi` on `PATH`.
+- A model provider configured through Pi.
+- An ACP client, such as Mischief, Zed, or another editor or tool that can launch a local ACP agent over stdio.
 
-Install Pi first:
+Git is only needed for the clone-and-build installation below.
 
-```sh
-npm install -g @earendil-works/pi-coding-agent
-```
+## Install
 
-Clone and build MagPi ACP:
-
-```sh
-git clone https://github.com/kylehumphrey-ao/magpi-acp.git
-```
+Install Pi and MagPi ACP:
 
 ```sh
-cd magpi-acp && npm ci && npm test && npm run build
+npm install -g @earendil-works/pi-coding-agent magpi-acp
 ```
 
 ## ACP client configuration
 
-Configure your ACP client to launch the built stdio process, replacing the absolute path:
+Configure your ACP client to launch the stdio process:
 
 ```json
 {
-  "command": "node",
-  "args": ["/absolute/path/to/magpi-acp/dist/index.js"]
+  "command": "magpi-acp",
+  "args": []
 }
 ```
 
@@ -63,13 +58,13 @@ The exact configuration format depends on the client.
 
 ## Update
 
-Pull, install any dependency changes, and rebuild:
+Update the global installation:
 
 ```sh
-cd /absolute/path/to/magpi-acp && git pull --ff-only && npm ci && npm run build
+npm install -g magpi-acp@latest
 ```
 
-Source changes are not hot-reloaded. Restart the ACP agent process or open a new session after rebuilding.
+Restart the ACP agent process or open a new session after updating.
 
 ## Optional Pi extensions
 
@@ -142,12 +137,16 @@ Set `MAGPI_ACP_PI_COMMAND` to override the `pi` executable path.
 MagPi ACP advertises Terminal Auth in its ACP initialize response. To configure Pi interactively:
 
 ```sh
-node /absolute/path/to/magpi-acp/dist/index.js --terminal-login
+magpi-acp --terminal-login
 ```
 
 Credentials remain managed by Pi and are not stored by MagPi ACP.
 
 ## Development
+
+```sh
+npm ci
+```
 
 ```sh
 npm run dev

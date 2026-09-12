@@ -26,7 +26,7 @@ Ready:
 
 Required before submission:
 
-1. Make `kylehumphrey-ao/magpi-acp` public.
+1. Make `digital-overground/magpi-acp` public.
 2. Authenticate npm and publish `magpi-acp@0.1.0`.
 3. Copy `icon.svg` and the entry below into a registry fork.
 4. Run registry validation against the published package and submit the pull request.
@@ -37,7 +37,7 @@ Required before submission:
   "name": "MagPi ACP",
   "version": "0.1.0",
   "description": "ACP adapter for the Pi coding agent with roles, plans, elicitation, session titles, and tree navigation",
-  "repository": "https://github.com/kylehumphrey-ao/magpi-acp",
+  "repository": "https://github.com/digital-overground/magpi-acp",
   "authors": ["Kyle Humphrey"],
   "license": "MIT",
   "distribution": {

@@ -6,16 +6,16 @@
   "author": "Kyle Humphrey",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kylehumphrey-ao/magpi-acp.git"
+    "url": "https://github.com/digital-overground/magpi-acp.git"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
   "bugs": {
-    "url": "https://github.com/kylehumphrey-ao/magpi-acp/issues"
+    "url": "https://github.com/digital-overground/magpi-acp/issues"
   },
-  "homepage": "https://github.com/kylehumphrey-ao/magpi-acp#readme",
+  "homepage": "https://github.com/digital-overground/magpi-acp#readme",
   "keywords": [
     "acp",
     "agent-client-protocol",
@@ -23,7 +23,7 @@
     "adapter"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "type": "module",
   "main": "dist/index.js",
@@ -41,6 +41,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "node --import tsx --test test/**/*.test.ts",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "smoke": "node scripts/smoke-acp.mjs",
     "prepack": "npm run build",
     "prepublishOnly": "npm run test && npm run build"
