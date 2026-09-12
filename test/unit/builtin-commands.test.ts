@@ -1,19 +1,29 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { MagPiAcpAgent, generateThreadTitle } from '../../src/acp/agent.js'
-import { MAGPI_ACP_TREE_COMMAND, MAGPI_ACP_TREE_REWIND_METHOD } from '../../src/pi-rpc/tree-command.js'
+import {
+  MAGPI_ACP_CLIENT_MESSAGE_ID_META,
+  MAGPI_ACP_TREE_COMMAND,
+  MAGPI_ACP_TREE_REWIND_METHOD
+} from '../../src/pi-rpc/tree-command.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 class FakeSessions {
+  forkParams: unknown
+
   constructor(private readonly session: any) {}
   maybeGet(_id: string) {
     return this.session
   }
   get(_id: string) {
     return this.session
+  }
+  async fork(params: unknown) {
+    this.forkParams = params
+    return 'forked-session'
   }
 }
 
@@ -174,6 +184,30 @@ test('MagPiAcpAgent: /tree does not send an unloaded internal command to the mod
   assert.equal(res.stopReason, 'end_turn')
   assert.equal(proc.prompts.length, 0)
   assert.match((conn.updates.at(-1) as any).update.content.text, /tree extension did not load/i)
+})
+
+test('MagPiAcpAgent: native fork targets a client user message', async () => {
+  const conn = new FakeAgentSideConnection()
+  const proc = new FakePiRpcProcess()
+  proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl' })
+  const sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] })
+  const agent = new MagPiAcpAgent(asAgentConn(conn))
+  ;(agent as any).sessions = sessions as any
+
+  const response = await agent.unstable_forkSession({
+    _meta: { [MAGPI_ACP_CLIENT_MESSAGE_ID_META]: 'client-message-1' },
+    cwd: '/workspace',
+    mcpServers: [],
+    sessionId: 's1'
+  })
+
+  assert.deepEqual(response, { sessionId: 'forked-session' })
+  assert.deepEqual(sessions.forkParams, {
+    clientMessageId: 'client-message-1',
+    cwd: '/workspace',
+    piCommand: undefined,
+    sourceSessionFile: '/sessions/source.jsonl'
+  })
 })
 
 test('MagPiAcpAgent: tree rewind extension method delegates to Pi', async () => {

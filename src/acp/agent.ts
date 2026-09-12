@@ -4,6 +4,8 @@ import {
   type AgentSideConnection,
   type AuthenticateRequest,
   type CancelNotification,
+  type ForkSessionRequest,
+  type ForkSessionResponse,
   type InitializeRequest,
   type InitializeResponse,
   type ListSessionsRequest,
@@ -32,7 +34,7 @@ import {
   MAGPI_ACP_TREE_REWIND_METHOD
 } from '../pi-rpc/tree-command.js'
 import { listPiSessions, findPiSession } from './pi-sessions.js'
-import { activeUserMessageEntryIds } from './pi-session-tree.js'
+import { activeSessionMessages, activeUserMessageEntryIds } from './pi-session-tree.js'
 import { normalizePiAssistantText, normalizePiMessageText } from './translate/pi-messages.js'
 import { todoResultToPlanEntries, toolResultToText } from './translate/pi-tools.js'
 import {
@@ -47,13 +49,13 @@ import {
 } from './translate/bash.js'
 import { promptToPiMessage } from './translate/prompt.js'
 import { loadSlashCommands, parseCommandArgs, toAvailableCommands } from './slash-commands.js'
-import { getAgentDir, getEnableSkillCommands, getQuietStartup, getRoles, type PiRole } from './pi-settings.js'
+import { getEnableSkillCommands, getQuietStartup, getRoles, type PiRole } from './pi-settings.js'
 import { toAvailableCommandsFromPiGetCommands } from './pi-commands.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { isAbsolute } from 'node:path'
-import { existsSync, readFileSync, realpathSync, readdirSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs'
 import type { AvailableCommand } from '@agentclientprotocol/sdk'
-import { join, dirname, basename } from 'node:path'
+import { join, dirname } from 'node:path'
 import { execFile, spawnSync } from 'node:child_process'
 import { getPiCommand, shouldUseShellForPiCommand } from '../pi-rpc/command.js'
 
@@ -275,6 +277,7 @@ export class MagPiAcpAgent implements ACPAgent {
           embeddedContext: process.env.MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT === 'true'
         },
         sessionCapabilities: {
+          fork: {},
           // **UNSTABLE** ACP capability for native session pickers.
           list: {}
         },
@@ -373,15 +376,7 @@ export class MagPiAcpAgent implements ACPAgent {
 
     // If quietStartup is enabled, suppress the full "startup info" prelude, but still surface
     // the "New version available" notice (if any) since it's high-signal and actionable.
-    const preludeText = quietStartup
-      ? updateNotice
-        ? updateNotice + '\n'
-        : ''
-      : buildStartupInfo({
-          cwd: params.cwd,
-          fileCommands,
-          updateNotice
-        })
+    const preludeText = quietStartup ? (updateNotice ? updateNotice + '\n' : '') : buildStartupInfo({ updateNotice })
 
     if (preludeText)
       session.setStartupInfo(preludeText)
@@ -416,8 +411,7 @@ export class MagPiAcpAgent implements ACPAgent {
     setTimeout(() => {
       void (async () => {
         try {
-          const pi = (await session.proc.getCommands()) as any
-          const { commands } = toAvailableCommandsFromPiGetCommands(pi, {
+          const { commands } = toAvailableCommandsFromPiGetCommands(await session.proc.getCommands(), {
             enableSkillCommands,
             includeExtensionCommands: false
           })
@@ -985,6 +979,25 @@ export class MagPiAcpAgent implements ACPAgent {
     await session.cancel()
   }
 
+  async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
+    const clientMessageId = params._meta?.[MAGPI_ACP_CLIENT_MESSAGE_ID_META]
+    if (typeof clientMessageId !== 'string') {
+      throw RequestError.invalidParams('A client message ID is required to fork this session.')
+    }
+    const source = await this.restoreSession(params.sessionId)
+    const state = (await source.proc.getState()) as { sessionFile?: unknown }
+    if (typeof state.sessionFile !== 'string') {
+      throw RequestError.internalError({}, 'Pi did not return the source session file.')
+    }
+    const sessionId = await this.sessions.fork({
+      clientMessageId,
+      cwd: params.cwd,
+      piCommand: process.env.MAGPI_ACP_PI_COMMAND,
+      sourceSessionFile: state.sessionFile
+    })
+    return { sessionId }
+  }
+
   async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     if (method !== MAGPI_ACP_TREE_REWIND_METHOD) {
       throw RequestError.methodNotFound(method)
@@ -1064,10 +1077,17 @@ export class MagPiAcpAgent implements ACPAgent {
       sessionFile: stored.sessionFile
     })
 
-    // Replay full conversation history.
-    const data = (await proc.getMessages()) as any
-    const messages = Array.isArray(data?.messages) ? data.messages : []
-    const userMessageEntryIds = activeUserMessageEntryIds(stored.sessionFile)
+    // Replay the full active branch; Pi's RPC context omits messages removed by compaction.
+    const activeMessages = activeSessionMessages(stored.sessionFile)
+    const data = activeMessages.length ? undefined : ((await proc.getMessages()) as any)
+    const messages = activeMessages.length
+      ? activeMessages.map(entry => entry.message)
+      : Array.isArray(data?.messages)
+        ? data.messages
+        : []
+    const userMessageEntryIds = activeMessages.length
+      ? activeMessages.filter(entry => entry.message.role === 'user').map(entry => entry.id)
+      : activeUserMessageEntryIds(stored.sessionFile)
     let userMessageIndex = 0
     let todoPlan: ReturnType<typeof todoResultToPlanEntries>
 
@@ -1672,161 +1692,24 @@ function buildUpdateNotice(): string | null {
   }
 }
 
-function buildStartupInfo(opts: {
-  cwd: string
-  fileCommands: ReturnType<typeof loadSlashCommands>
-  updateNotice: string | null
-}): string {
-  void opts.fileCommands
-
-  const md: string[] = []
-
-  // pi version header
+function buildStartupInfo(opts: { updateNotice: string | null }): string {
+  let piVersionText = 'pi'
   try {
     const piVersion = spawnSync('pi', ['--version'], { encoding: 'utf-8' })
     const installed = (String(piVersion.stdout ?? '').trim() || String(piVersion.stderr ?? '').trim()).replace(
       /^v/i,
       ''
     )
-    if (installed) {
-      md.push(`pi v${installed}`)
-      md.push('---')
-      md.push('')
-    }
+    if (installed) piVersionText = `pi v${installed}`
   } catch {
-    // ignore
+    // The message still works when pi does not report a version.
   }
 
-  const addSection = (title: string, items: string[]) => {
-    const cleaned = items.map(s => s.trim()).filter(Boolean)
-    if (!cleaned.length) return
+  const lines = [`MagPi v${pkg.version ?? '0.0.0'}`, piVersionText, 'collect shiny things']
 
-    md.push(`## ${title}`)
-    for (const item of cleaned) md.push(`- ${item}`)
-    md.push('')
-  }
+  if (opts.updateNotice) lines.push('', '---', opts.updateNotice)
 
-  // Context
-  const contextItems: string[] = []
-  const contextPath = join(opts.cwd, 'AGENTS.md')
-  if (existsSync(contextPath)) contextItems.push(contextPath)
-  addSection('Context', contextItems)
-
-  // Skills
-  const skillsItems: string[] = []
-
-  const pushSkillFromRoot = (root: string) => {
-    try {
-      // Direct .md files in root
-      for (const e of readdirSync(root)) {
-        const p = join(root, e)
-        try {
-          const st = statSync(p)
-          if (st.isFile() && e.toLowerCase().endsWith('.md')) {
-            skillsItems.push(p)
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      // Recursive SKILL.md under subdirectories
-      const stack: string[] = [root]
-      while (stack.length) {
-        const dir = stack.pop()!
-        let entries: string[] = []
-        try {
-          entries = readdirSync(dir)
-        } catch {
-          continue
-        }
-
-        for (const name of entries) {
-          // Skip obvious noise
-          if (name === 'node_modules' || name === '.git') continue
-          const p = join(dir, name)
-          let st
-          try {
-            st = statSync(p)
-          } catch {
-            continue
-          }
-          if (st.isDirectory()) {
-            stack.push(p)
-          } else if (st.isFile() && name === 'SKILL.md') {
-            skillsItems.push(p)
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  // Global skills
-  // Use getAgentDir() so this respects PI_CODING_AGENT_DIR overrides.
-  const globalSkillsDir = join(getAgentDir(), 'skills')
-  pushSkillFromRoot(globalSkillsDir)
-
-  // Also support ~/.agents/skills (pi skill discovery)
-  const legacyAgentsSkillsDir = join(process.env.HOME ?? '', '.agents', 'skills')
-  pushSkillFromRoot(legacyAgentsSkillsDir)
-
-  // Project skills (.pi/skills)
-  const projectSkillsDir = join(opts.cwd, '.pi', 'skills')
-  pushSkillFromRoot(projectSkillsDir)
-
-  addSection('Skills', skillsItems)
-
-  // Prompts
-  const promptsItems: string[] = []
-  const promptsDir = join(process.env.HOME ?? '', '.pi', 'agent', 'prompts')
-  try {
-    const prompts = readdirSync(promptsDir).filter(f => f.endsWith('.md'))
-    for (const f of prompts) promptsItems.push(`/${basename(f, '.md')}`)
-  } catch {
-    // ignore
-  }
-  addSection('Prompts', promptsItems)
-
-  // Extensions
-  const extItems: string[] = []
-  const extDir = join(process.env.HOME ?? '', '.pi', 'agent', 'extensions')
-  try {
-    const exts = readdirSync(extDir).filter(f => f.endsWith('.ts') || f.endsWith('.js'))
-    for (const f of exts) extItems.push(join(extDir, f))
-  } catch {
-    // ignore
-  }
-
-  // Also show npm packages from pi settings (best-effort)
-  try {
-    const settingsPath = join(process.env.HOME ?? '', '.pi', 'agent', 'settings.json')
-    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8')) as any
-    const pkgs: string[] = Array.isArray(settings?.packages) ? settings.packages : []
-    for (const pkg of pkgs) {
-      const s = String(pkg)
-      if (s.startsWith('npm:')) {
-        // Render a two-line bullet structure using markdown indentation.
-        extItems.push(`${s}\n  - index.ts`)
-      } else {
-        extItems.push(s)
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  addSection('Extensions', extItems)
-
-  if (opts.updateNotice) {
-    md.push('---')
-    md.push(opts.updateNotice)
-    md.push('')
-  }
-
-  // Do NOT include themes (per request).
-  return md.join('\n').trim() + '\n'
+  return lines.join('\n').trim() + '\n'
 }
 
 function readNearestPackageJson(metaUrl: string): {

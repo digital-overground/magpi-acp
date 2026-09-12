@@ -16,6 +16,7 @@ import { PiRpcProcess, PiRpcSpawnError, type PiRpcEvent } from '../pi-rpc/proces
 import { MAGPI_ACP_TREE_SELECTION_TITLE, MAGPI_ACP_TREE_SUMMARY_TITLE } from '../pi-rpc/tree-command.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { SessionStore } from './session-store.js'
+import { userMessageEntryId } from './pi-session-tree.js'
 import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
 import {
   bashCommand,
@@ -67,6 +68,39 @@ const ELICITATION_CHOICE_FIELD = 'choice'
 const ELICITATION_OTHER_FIELD = 'other'
 const ELICITATION_ANSWER_FIELD = 'answer'
 const FREEFORM_CHOICE_RE = /\b(?:type|enter|write)\s+(?:a\s+)?(?:custom|free[- ]?form)\s+(?:answer|response)\b/i
+
+type AskUserOption = { title: string; description?: string }
+type AskUserPrompt = {
+  question?: string
+  context?: string
+  options: AskUserOption[]
+}
+
+function askUserPrompt(args: unknown): AskUserPrompt {
+  if (!args || typeof args !== 'object') return { options: [] }
+  const record = args as Record<string, unknown>
+  const options = Array.isArray(record.options)
+    ? record.options.flatMap(option => {
+        if (typeof option === 'string') return [{ title: option }]
+        if (!option || typeof option !== 'object') return []
+
+        const item = option as Record<string, unknown>
+        if (typeof item.title !== 'string') return []
+        return [
+          {
+            title: item.title,
+            ...(typeof item.description === 'string' ? { description: item.description } : {})
+          }
+        ]
+      })
+    : []
+
+  return {
+    ...(typeof record.question === 'string' ? { question: record.question } : {}),
+    ...(typeof record.context === 'string' ? { context: record.context } : {}),
+    options
+  }
+}
 
 function findUniqueLineNumber(text: string, needle: string): number | undefined {
   if (!needle) return undefined
@@ -183,7 +217,8 @@ function toUsageUpdate(stats: unknown): SessionUpdate | undefined {
 
 export class SessionManager {
   private sessions = new Map<string, MagPiAcpSession>()
-  private readonly store = new SessionStore()
+
+  constructor(private readonly store = new SessionStore()) {}
 
   /** Dispose all sessions and their underlying pi subprocesses. */
   disposeAll(): void {
@@ -215,6 +250,41 @@ export class SessionManager {
     for (const [id] of this.sessions) {
       if (id === keepSessionId) continue
       this.close(id)
+    }
+  }
+
+  async fork(params: {
+    clientMessageId: string
+    cwd: string
+    piCommand?: string
+    sourceSessionFile: string
+  }): Promise<string> {
+    const entryId = userMessageEntryId(params.sourceSessionFile, params.clientMessageId)
+    if (!entryId) {
+      throw RequestError.invalidParams(`No Pi user message matches client message ${params.clientMessageId}.`)
+    }
+    const proc = await PiRpcProcess.spawn({
+      cwd: params.cwd,
+      piCommand: params.piCommand,
+      sessionPath: params.sourceSessionFile
+    })
+    try {
+      await proc.fork(entryId)
+      const state = (await proc.getState()) as {
+        sessionFile?: unknown
+        sessionId?: unknown
+      }
+      if (typeof state.sessionId !== 'string' || typeof state.sessionFile !== 'string') {
+        throw RequestError.internalError({}, 'Pi did not return the forked session identity.')
+      }
+      this.store.upsert({
+        cwd: params.cwd,
+        sessionFile: state.sessionFile,
+        sessionId: state.sessionId
+      })
+      return state.sessionId
+    } finally {
+      proc.dispose()
     }
   }
 
@@ -315,6 +385,7 @@ export class MagPiAcpSession {
   // Some pi events can arrive out of order (e.g. late toolcall_* deltas after execution starts),
   // and clients may hide progress if we ever downgrade back to `pending`.
   private currentToolCalls = new Map<string, 'pending' | 'in_progress'>()
+  private activeAskUser?: AskUserPrompt & { toolCallId: string }
 
   // pi can emit multiple `turn_end` events for a single user prompt (e.g. after tool_use).
   // The overall agent loop completes when `agent_end` is emitted.
@@ -507,6 +578,7 @@ export class MagPiAcpSession {
 
   private cleanupToolCall(toolCallId: string): void {
     this.currentToolCalls.delete(toolCallId)
+    if (this.activeAskUser?.toolCallId === toolCallId) this.activeAskUser = undefined
     this.fileSnapshots.delete(toolCallId)
     this.fileMutationToolCallIds.delete(toolCallId)
     this.bashToolCallIds.delete(toolCallId)
@@ -657,6 +729,10 @@ export class MagPiAcpSession {
         const toolName = String((ev as any).toolName ?? 'tool')
         const args = (ev as any).args
         let line: number | undefined
+
+        if (toolName === 'ask_user') {
+          this.activeAskUser = { toolCallId, ...askUserPrompt(args) }
+        }
 
         if (isBashTool(toolName)) {
           const locations = toToolCallLocations(args, this.cwd)
@@ -971,39 +1047,53 @@ export class MagPiAcpSession {
       return
     }
 
-    const properties: NonNullable<ElicitationSchema['properties']> = {
-      [ELICITATION_CHOICE_FIELD]: {
-        type: 'string',
-        title: 'Suggested answers',
-        oneOf: options.map(option => ({ const: option, title: option }))
-      }
-    }
-
     const title = stringProp(ev, 'title')
     const isStrictTreeSelection = title === MAGPI_ACP_TREE_SELECTION_TITLE || title === MAGPI_ACP_TREE_SUMMARY_TITLE
+    const choices = isStrictTreeSelection ? options : options.filter(option => !FREEFORM_CHOICE_RE.test(option))
+    const properties: NonNullable<ElicitationSchema['properties']> = {}
 
-    if (!isStrictTreeSelection && !options.some(option => FREEFORM_CHOICE_RE.test(option))) {
-      properties[ELICITATION_OTHER_FIELD] = {
+    if (choices.length) {
+      properties[ELICITATION_CHOICE_FIELD] = {
         type: 'string',
-        title: 'Other answer',
-        description: 'Optional. When provided, this answer overrides the selected suggestion.'
+        title: 'Suggested answers',
+        oneOf: choices.map(option => {
+          const description = this.activeAskUser?.options.find(candidate => candidate.title === option)?.description
+          return {
+            const: option,
+            title: option,
+            ...(description ? { _meta: { magPiAcp: { description } } } : {})
+          }
+        })
       }
     }
 
-    const response = await this.requestExtensionElicitation(ev, {
-      type: 'object',
-      properties,
-      required: [ELICITATION_CHOICE_FIELD]
-    })
+    if (!isStrictTreeSelection) {
+      properties[ELICITATION_OTHER_FIELD] = {
+        type: 'string',
+        title: 'Custom response',
+        description: 'Optional. Add a custom answer or context for the selected suggestion.'
+      }
+    }
+
+    const response = await this.requestExtensionElicitation(
+      ev,
+      {
+        type: 'object',
+        ...(this.activeAskUser?.context ? { description: this.activeAskUser.context } : {}),
+        properties,
+        ...(isStrictTreeSelection ? { required: [ELICITATION_CHOICE_FIELD] } : {})
+      },
+      this.activeAskUser?.question
+    )
 
     if (response?.action !== 'accept') {
       await this.proc.sendExtensionUiResponse({ id, cancelled: true })
       return
     }
 
-    const other = elicitationString(response, ELICITATION_OTHER_FIELD)
+    const other = elicitationString(response, ELICITATION_OTHER_FIELD)?.trim() || null
     const choice = elicitationString(response, ELICITATION_CHOICE_FIELD)
-    const value = other?.trim() ? other : choice
+    const value = choice && other ? `${choice}\n\n${other}` : (other ?? choice)
     await this.proc.sendExtensionUiResponse(value === null ? { id, cancelled: true } : { id, value })
   }
 
@@ -1066,13 +1156,14 @@ export class MagPiAcpSession {
 
   private async requestExtensionElicitation(
     ev: PiRpcEvent,
-    requestedSchema: ElicitationSchema
+    requestedSchema: ElicitationSchema,
+    message?: string
   ): Promise<ElicitationResponse | null> {
     try {
       return await this.conn.unstable_createElicitation({
         sessionId: this.sessionId,
         mode: 'form',
-        message: stringProp(ev, 'title') ?? 'Pi requests input',
+        message: message ?? stringProp(ev, 'title') ?? 'Pi requests input',
         requestedSchema
       })
     } catch {

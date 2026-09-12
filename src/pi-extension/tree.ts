@@ -1,12 +1,11 @@
 import {
+  MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE,
   MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_TREE_COMMAND,
   MAGPI_ACP_TREE_SELECTION_TITLE,
   MAGPI_ACP_TREE_SUMMARY_TITLE
 } from '../pi-rpc/tree-command.js'
-
-const CLIENT_MESSAGE_ENTRY_TYPE = 'magpi-acp-client-message'
 
 type MessageContent = string | Array<{ type?: string; text?: string }>
 
@@ -181,7 +180,7 @@ export default function registerMagPiAcpTree(pi: PiExtensionApi): void {
       return
     }
 
-    pi.appendEntry<ClientMessageEntryData>(CLIENT_MESSAGE_ENTRY_TYPE, {
+    pi.appendEntry<ClientMessageEntryData>(MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE, {
       clientMessageId: pendingClientMessageId,
       userEntryId
     })
@@ -201,7 +200,7 @@ export default function registerMagPiAcpTree(pi: PiExtensionApi): void {
 
       for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index]
-        if (entry.type !== 'custom' || entry.customType !== CLIENT_MESSAGE_ENTRY_TYPE) continue
+        if (entry.type !== 'custom' || entry.customType !== MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE) continue
 
         const data = entry.data as Partial<ClientMessageEntryData> | undefined
         if (data?.clientMessageId === clientMessageId && typeof data.userEntryId === 'string') {

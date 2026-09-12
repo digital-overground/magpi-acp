@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { MagPiAcpAgent } from '../../src/acp/agent.js'
+import { activeSessionMessages } from '../../src/acp/pi-session-tree.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 
 // We mock PiRpcProcess.spawn so loadSession doesn't actually spawn `pi`.
@@ -44,14 +45,32 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
         message: { role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] }
       }),
       JSON.stringify({
-        type: 'session_info',
+        type: 'message',
         id: 'c3d4e5f6',
         parentId: 'b2c3d4e5',
         timestamp: '2026-02-11T00:00:03.000Z',
+        message: {
+          role: 'toolResult',
+          toolName: 'todo',
+          details: {
+            tasks: [{ id: 1, subject: 'Verify the restored session', status: 'in_progress' }]
+          }
+        }
+      }),
+      JSON.stringify({
+        type: 'session_info',
+        id: 'd4e5f6a7',
+        parentId: 'c3d4e5f6',
+        timestamp: '2026-02-11T00:00:04.000Z',
         name: 'My Named Session'
       })
     ].join('\n') + '\n',
     { encoding: 'utf8' }
+  )
+
+  assert.deepEqual(
+    activeSessionMessages(sessionFile).map(entry => entry.id),
+    ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']
   )
 
   const oldEnv = process.env.PI_CODING_AGENT_DIR
@@ -69,8 +88,17 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     assert.ok(s)
     assert.equal(s?.cwd, '/tmp/project')
     assert.equal(s?.title, 'My Named Session')
+    ;(agent as any).store = {
+      get: () => ({
+        sessionId: 'sess-1',
+        cwd: '/tmp/project',
+        sessionFile,
+        updatedAt: '2026-02-11T00:00:04.000Z'
+      }),
+      upsert: () => {}
+    }
 
-    // 2) load session: mock spawn to return fake proc with getMessages
+    // 2) load session: mock spawn to return fake proc with compacted history
     const originalSpawn = PiRpcProcess.spawn
 
     ;(PiRpcProcess as any).spawn = async (params: any) => {
@@ -83,17 +111,7 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
           // noop unsubscribe
         },
         getMessages: async () => ({
-          messages: [
-            { role: 'user', content: 'Hello' },
-            { role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] },
-            {
-              role: 'toolResult',
-              toolName: 'todo',
-              details: {
-                tasks: [{ id: 1, subject: 'Verify the restored session', status: 'in_progress' }]
-              }
-            }
-          ]
+          messages: [{ role: 'user', content: 'Only the compacted context' }]
         }),
         getAvailableModels: async () => ({ models: [] }),
         getState: async () => ({ thinkingLevel: 'medium' })

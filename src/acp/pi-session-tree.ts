@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE } from '../pi-rpc/tree-command.js'
 
 type SessionEntry = {
   id?: unknown
@@ -6,10 +7,66 @@ type SessionEntry = {
   type?: unknown
   message?: {
     role?: unknown
+    [key: string]: unknown
+  }
+  customType?: unknown
+  data?: {
+    clientMessageId?: unknown
+    userEntryId?: unknown
   }
 }
 
-export function activeUserMessageEntryIds(sessionFile: string): string[] {
+export function userMessageEntryId(sessionFile: string, clientMessageId: string): string | undefined {
+  let contents: string
+  try {
+    contents = readFileSync(sessionFile, 'utf8')
+  } catch {
+    return undefined
+  }
+
+  const entries = contents
+    .split('\n')
+    .filter(line => line.trim())
+    .flatMap(line => {
+      try {
+        return [JSON.parse(line) as SessionEntry]
+      } catch {
+        return []
+      }
+    })
+  const direct = entries.find(
+    entry => entry.id === clientMessageId && entry.type === 'message' && entry.message?.role === 'user'
+  )
+  if (typeof direct?.id === 'string') return direct.id
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const marker = entries[index]
+    if (
+      marker.type !== 'custom' ||
+      marker.customType !== MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE ||
+      marker.data?.clientMessageId !== clientMessageId
+    ) {
+      continue
+    }
+    const child = entries.find(
+      entry => entry.parentId === marker.id && entry.type === 'message' && entry.message?.role === 'user'
+    )
+    if (typeof child?.id === 'string') return child.id
+
+    const recorded = entries.find(
+      entry => entry.id === marker.data?.userEntryId && entry.type === 'message' && entry.message?.role === 'user'
+    )
+    if (typeof recorded?.id === 'string') return recorded.id
+  }
+  return undefined
+}
+
+export type ActiveSessionMessage = {
+  id: string
+  message: NonNullable<SessionEntry['message']>
+}
+
+export function activeSessionMessages(sessionFile: string): ActiveSessionMessage[] {
   let contents: string
   try {
     contents = readFileSync(sessionFile, 'utf8')
@@ -47,5 +104,13 @@ export function activeUserMessageEntryIds(sessionFile: string): string[] {
   }
 
   path.reverse()
-  return path.filter(entry => entry.type === 'message' && entry.message?.role === 'user').map(entry => entry.id)
+  return path.flatMap(entry =>
+    entry.type === 'message' && entry.message ? [{ id: entry.id, message: entry.message }] : []
+  )
+}
+
+export function activeUserMessageEntryIds(sessionFile: string): string[] {
+  return activeSessionMessages(sessionFile)
+    .filter(entry => entry.message.role === 'user')
+    .map(entry => entry.id)
 }

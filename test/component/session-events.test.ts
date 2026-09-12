@@ -242,7 +242,7 @@ test('MagPiAcpSession: sends cancelled response when ACP confirm is cancelled', 
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-5', cancelled: true }])
 })
 
-test('MagPiAcpSession: handles extension select with ACP elicitation and free-form override', async () => {
+test('MagPiAcpSession: combines an extension selection with custom context', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextElicitationResponse = {
     action: 'accept',
@@ -261,6 +261,19 @@ test('MagPiAcpSession: handles extension select with ACP elicitation and free-fo
   })
 
   proc.emit({
+    type: 'tool_execution_start',
+    toolCallId: 'ask-1',
+    toolName: 'ask_user',
+    args: {
+      question: 'Which option should we use?',
+      context: 'This context is visually secondary.',
+      options: [
+        { title: 'Alpha', description: 'The first option' },
+        { title: 'Beta', description: 'The second option' }
+      ]
+    }
+  })
+  proc.emit({
     type: 'extension_ui_request',
     id: 'ui-select',
     method: 'select',
@@ -274,37 +287,45 @@ test('MagPiAcpSession: handles extension select with ACP elicitation and free-fo
     {
       sessionId: 's1',
       mode: 'form',
-      message: 'Pick one',
+      message: 'Which option should we use?',
       requestedSchema: {
         type: 'object',
+        description: 'This context is visually secondary.',
         properties: {
           choice: {
             type: 'string',
             title: 'Suggested answers',
             oneOf: [
-              { const: 'Alpha', title: 'Alpha' },
-              { const: 'Beta', title: 'Beta' }
+              {
+                const: 'Alpha',
+                title: 'Alpha',
+                _meta: { magPiAcp: { description: 'The first option' } }
+              },
+              {
+                const: 'Beta',
+                title: 'Beta',
+                _meta: { magPiAcp: { description: 'The second option' } }
+              }
             ]
           },
           other: {
             type: 'string',
-            title: 'Other answer',
-            description: 'Optional. When provided, this answer overrides the selected suggestion.'
+            title: 'Custom response',
+            description: 'Optional. Add a custom answer or context for the selected suggestion.'
           }
-        },
-        required: ['choice']
+        }
       }
     }
   ])
   assert.equal(conn.permissionRequests.length, 0)
-  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-select', value: 'A different answer' }])
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-select', value: 'Alpha\n\nA different answer' }])
 })
 
-test('MagPiAcpSession: does not duplicate an extension-provided free-form choice', async () => {
+test('MagPiAcpSession: turns an extension-provided free-form choice into a text field', async () => {
   const conn = new FakeAgentSideConnection()
   conn.nextElicitationResponse = {
     action: 'accept',
-    content: { choice: '✏️ Type custom response...' }
+    content: { other: 'A custom answer' }
   }
   const proc = new FakePiRpcProcess()
 
@@ -328,17 +349,22 @@ test('MagPiAcpSession: does not duplicate an extension-provided free-form choice
 
   await new Promise(r => setTimeout(r, 0))
 
-  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema.properties, {
-    choice: {
-      type: 'string',
-      title: 'Suggested answers',
-      oneOf: [
-        { const: 'Alpha', title: 'Alpha' },
-        { const: '✏️ Type custom response...', title: '✏️ Type custom response...' }
-      ]
+  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema, {
+    type: 'object',
+    properties: {
+      choice: {
+        type: 'string',
+        title: 'Suggested answers',
+        oneOf: [{ const: 'Alpha', title: 'Alpha' }]
+      },
+      other: {
+        type: 'string',
+        title: 'Custom response',
+        description: 'Optional. Add a custom answer or context for the selected suggestion.'
+      }
     }
   })
-  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-freeform', value: '✏️ Type custom response...' }])
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-freeform', value: 'A custom answer' }])
 })
 
 test('MagPiAcpSession: tree selection elicitation only accepts a listed tree entry', async () => {

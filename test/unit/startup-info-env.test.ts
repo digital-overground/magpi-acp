@@ -10,6 +10,48 @@ class FakeSessions {
   }
 }
 
+test('MagPiAcpAgent: startup message shows versions and tagline', async () => {
+  const prevAgentDir = process.env.PI_CODING_AGENT_DIR
+  const { mkdtempSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), 'magpi-acp-startup-'))
+
+  const realSetTimeout = globalThis.setTimeout
+  ;(globalThis as any).setTimeout = () => 0 as any
+
+  try {
+    const conn = new FakeAgentSideConnection()
+    const session = {
+      sessionId: 's1',
+      proc: {
+        async getAvailableModels() {
+          return { models: [{ provider: 'test', id: 'model', name: 'model' }] }
+        },
+        async getState() {
+          return { thinkingLevel: 'medium', model: { provider: 'test', id: 'model' } }
+        }
+      },
+      sendStartupInfoIfPending() {},
+      sendUsageUpdate() {},
+      setStartupInfo() {}
+    }
+
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
+    ;(agent as any).sessions = new FakeSessions(session) as any
+
+    const result = await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
+    const startupInfo = result?._meta?.magPiAcp?.startupInfo ?? ''
+
+    assert.match(startupInfo, /^MagPi v\d+\.\d+\.\d+\npi v\d+\.\d+\.\d+\ncollect shiny things\n/)
+    assert.doesNotMatch(startupInfo, /```/)
+  } finally {
+    ;(globalThis as any).setTimeout = realSetTimeout
+    if (prevAgentDir == null) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = prevAgentDir
+  }
+})
+
 test('MagPiAcpAgent: quietStartup=true disables startup info generation/emission', async () => {
   const prevAgentDir = process.env.PI_CODING_AGENT_DIR
 

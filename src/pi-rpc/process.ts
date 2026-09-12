@@ -50,6 +50,7 @@ type PiRpcCommand =
   | { type: 'set_session_name'; id?: string; name: string }
   | { type: 'export_html'; id?: string; outputPath?: string }
   | { type: 'switch_session'; id?: string; sessionPath: string }
+  | { type: 'fork'; id?: string; entryId: string }
   // Messages
   | { type: 'get_messages'; id?: string }
   // Commands
@@ -254,6 +255,14 @@ export class PiRpcProcess {
 
   async rewindClientMessage(clientMessageId: string): Promise<void> {
     await this.prompt(`/${MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
+  }
+
+  async fork(entryId: string): Promise<void> {
+    const res = await this.request({ type: 'fork', entryId })
+    if (!res.success) throw new Error(`pi fork failed: ${res.error ?? JSON.stringify(res.data)}`)
+    if ((res.data as { cancelled?: unknown } | undefined)?.cancelled === true) {
+      throw new Error('Pi cancelled the fork.')
+    }
   }
 
   async abort(): Promise<void> {
