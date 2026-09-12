@@ -12,10 +12,12 @@ class FakeSessions {
 
 test('MagPiAcpAgent: startup message shows versions and tagline', async () => {
   const prevAgentDir = process.env.PI_CODING_AGENT_DIR
+  const prevPiCommand = process.env.MAGPI_ACP_PI_COMMAND
   const { mkdtempSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
   process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), 'magpi-acp-startup-'))
+  process.env.MAGPI_ACP_PI_COMMAND = process.execPath
 
   const realSetTimeout = globalThis.setTimeout
   ;(globalThis as any).setTimeout = () => 0 as any
@@ -49,6 +51,8 @@ test('MagPiAcpAgent: startup message shows versions and tagline', async () => {
     ;(globalThis as any).setTimeout = realSetTimeout
     if (prevAgentDir == null) delete process.env.PI_CODING_AGENT_DIR
     else process.env.PI_CODING_AGENT_DIR = prevAgentDir
+    if (prevPiCommand == null) delete process.env.MAGPI_ACP_PI_COMMAND
+    else process.env.MAGPI_ACP_PI_COMMAND = prevPiCommand
   }
 })
 

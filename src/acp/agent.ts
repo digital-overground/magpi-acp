@@ -1663,15 +1663,20 @@ function compareSemver(a: string, b: string): number {
   return 0
 }
 
+function installedPiVersion(): string {
+  const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND)
+  const result = spawnSync(command, ['--version'], {
+    encoding: 'utf-8',
+    shell: shouldUseShellForPiCommand(command)
+  })
+  return (String(result.stdout ?? '').trim() || String(result.stderr ?? '').trim()).replace(/^v/i, '')
+}
+
 function buildUpdateNotice(): string | null {
   // Best-effort update check against npm registry.
   // Important: keep it fast to not slow down session/new.
   try {
-    const piVersion = spawnSync('pi', ['--version'], { encoding: 'utf-8' })
-    const installed = (String(piVersion.stdout ?? '').trim() || String(piVersion.stderr ?? '').trim()).replace(
-      /^v/i,
-      ''
-    )
+    const installed = installedPiVersion()
 
     if (!installed || !isSemver(installed)) return null
 
@@ -1695,11 +1700,7 @@ function buildUpdateNotice(): string | null {
 function buildStartupInfo(opts: { updateNotice: string | null }): string {
   let piVersionText = 'pi'
   try {
-    const piVersion = spawnSync('pi', ['--version'], { encoding: 'utf-8' })
-    const installed = (String(piVersion.stdout ?? '').trim() || String(piVersion.stderr ?? '').trim()).replace(
-      /^v/i,
-      ''
-    )
+    const installed = installedPiVersion()
     if (installed) piVersionText = `pi v${installed}`
   } catch {
     // The message still works when pi does not report a version.
