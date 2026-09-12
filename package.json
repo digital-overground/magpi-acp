@@ -6,7 +6,7 @@
   "author": "Kyle Humphrey",
   "repository": {
     "type": "git",
-    "url": "https://github.com/digital-overground/magpi-acp.git"
+    "url": "git+https://github.com/digital-overground/magpi-acp.git"
   },
   "publishConfig": {
     "access": "public",
