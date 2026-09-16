@@ -1,5 +1,6 @@
 import {
   MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE,
+  MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_TREE_COMMAND,
@@ -17,6 +18,7 @@ type SessionEntry = {
   message?: {
     role?: string
     content?: MessageContent
+    timestamp?: unknown
   }
   content?: MessageContent
   summary?: string
@@ -43,6 +45,7 @@ type TreeCommandContext = {
     getEntry(id: string): SessionEntry | undefined
   }
   waitForIdle(): Promise<void>
+  fork(entryId: string, options?: { position?: 'before' | 'at' }): Promise<{ cancelled: boolean }>
   navigateTree(
     targetId: string,
     options?: {
@@ -160,6 +163,40 @@ function treeChoices(tree: SessionTreeNode[], leafId: string | null): TreeChoice
   return choices
 }
 
+function messageTarget(
+  sessionManager: TreeCommandContext['sessionManager'],
+  clientMessageId: string
+): { id: string; isUserMessage: boolean } | undefined {
+  const entries = sessionManager.getEntries()
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry.type !== 'custom' || entry.customType !== MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE) continue
+
+    const data = entry.data as Partial<ClientMessageEntryData> | undefined
+    if (data?.clientMessageId === clientMessageId && typeof data.userEntryId === 'string') {
+      return { id: data.userEntryId, isUserMessage: true }
+    }
+  }
+
+  const directEntry = sessionManager.getEntry(clientMessageId)
+  if (
+    directEntry?.type === 'message' &&
+    (directEntry.message?.role === 'user' || directEntry.message?.role === 'assistant')
+  ) {
+    return { id: directEntry.id, isUserMessage: directEntry.message.role === 'user' }
+  }
+
+  const timestamp = Number(clientMessageId)
+  if (Number.isSafeInteger(timestamp)) {
+    const response = entries.find(
+      entry => entry.type === 'message' && entry.message?.role === 'assistant' && entry.message.timestamp === timestamp
+    )
+    if (response) return { id: response.id, isUserMessage: false }
+  }
+
+  return undefined
+}
+
 export default function registerMagPiAcpTree(pi: PiExtensionApi): void {
   let pendingClientMessageId: string | undefined
 
@@ -187,6 +224,24 @@ export default function registerMagPiAcpTree(pi: PiExtensionApi): void {
     pendingClientMessageId = undefined
   })
 
+  pi.registerCommand(MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND, {
+    description: 'Internal magpi-acp message fork',
+    handler: async (args, ctx) => {
+      await ctx.waitForIdle()
+
+      const clientMessageId = args.trim()
+      if (!clientMessageId) throw new Error('Missing client message ID.')
+
+      const target = messageTarget(ctx.sessionManager, clientMessageId)
+      if (!target) throw new Error(`No Pi message matches client message ${clientMessageId}.`)
+
+      const result = await ctx.fork(target.id, {
+        position: target.isUserMessage ? 'before' : 'at'
+      })
+      if (result.cancelled) throw new Error('Pi cancelled the fork.')
+    }
+  })
+
   pi.registerCommand(MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND, {
     description: 'Internal magpi-acp message rewind',
     handler: async (args, ctx) => {
@@ -195,30 +250,10 @@ export default function registerMagPiAcpTree(pi: PiExtensionApi): void {
       const clientMessageId = args.trim()
       if (!clientMessageId) throw new Error('Missing client message ID.')
 
-      const entries = ctx.sessionManager.getEntries()
-      let targetId: string | undefined
+      const target = messageTarget(ctx.sessionManager, clientMessageId)
+      if (!target) throw new Error(`No Pi message matches client message ${clientMessageId}.`)
 
-      for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index]
-        if (entry.type !== 'custom' || entry.customType !== MAGPI_ACP_CLIENT_MESSAGE_ENTRY_TYPE) continue
-
-        const data = entry.data as Partial<ClientMessageEntryData> | undefined
-        if (data?.clientMessageId === clientMessageId && typeof data.userEntryId === 'string') {
-          targetId = data.userEntryId
-          break
-        }
-      }
-
-      if (!targetId) {
-        const directEntry = ctx.sessionManager.getEntry(clientMessageId)
-        if (directEntry?.type === 'message' && directEntry.message?.role === 'user') {
-          targetId = directEntry.id
-        }
-      }
-
-      if (!targetId) throw new Error(`No Pi user message matches client message ${clientMessageId}.`)
-
-      const result = await ctx.navigateTree(targetId, { summarize: false })
+      const result = await ctx.navigateTree(target.id, { summarize: false })
       if (result.cancelled) throw new Error('Pi cancelled tree navigation.')
     }
   })

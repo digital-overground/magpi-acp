@@ -1,5 +1,6 @@
 export const MAGPI_ACP_TREE_COMMAND = '__magpi_acp_internal_tree'
 export const MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND = '__magpi_acp_internal_mark_client_message'
+export const MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND = '__magpi_acp_internal_fork_client_message'
 export const MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND = '__magpi_acp_internal_rewind_client_message'
 export const MAGPI_ACP_TREE_SELECTION_TITLE = 'Choose where Pi should continue from'
 export const MAGPI_ACP_TREE_SUMMARY_TITLE = 'Summarize the branch being left?'

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import registerMagPiAcpTree from '../../src/pi-extension/tree.js'
 import {
+  MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
   MAGPI_ACP_TREE_COMMAND
@@ -27,7 +28,7 @@ function loadTreeCommand(): RegisteredCommand {
   return registeredCommand
 }
 
-test('Pi tree extension maps an ACP client message ID and rewinds with native tree navigation', async () => {
+test('Pi tree extension maps an ACP client message ID to native user-message operations', async () => {
   const commands = new Map<string, RegisteredCommand>()
   let turnStart: ((event: unknown, context: any) => void | Promise<void>) | undefined
   const customEntries: Array<{ customType: string; data: unknown }> = []
@@ -44,8 +45,10 @@ test('Pi tree extension maps an ACP client message ID and rewinds with native tr
     }
   })
 
+  const fork = commands.get(MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND)
   const mark = commands.get(MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND)
   const rewind = commands.get(MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND)
+  assert.ok(fork)
   assert.ok(mark)
   assert.ok(rewind)
   assert.ok(turnStart)
@@ -60,8 +63,9 @@ test('Pi tree extension maps an ACP client message ID and rewinds with native tr
     }
   ])
 
+  const forks: Array<{ targetId: string; options: unknown }> = []
   const navigations: Array<{ targetId: string; options: unknown }> = []
-  await rewind.handler('client-message-1', {
+  const context = {
     waitForIdle: async () => {},
     sessionManager: {
       getEntries: () => [
@@ -75,13 +79,67 @@ test('Pi tree extension maps an ACP client message ID and rewinds with native tr
       ],
       getEntry: () => undefined
     },
+    fork: async (targetId: string, options: unknown) => {
+      forks.push({ targetId, options })
+      return { cancelled: false }
+    },
     navigateTree: async (targetId: string, options: unknown) => {
       navigations.push({ targetId, options })
       return { cancelled: false }
     }
-  } as any)
+  } as any
 
+  await fork.handler('client-message-1', context)
+  await rewind.handler('client-message-1', context)
+
+  assert.deepEqual(forks, [{ targetId: 'pi-user-1', options: { position: 'before' } }])
   assert.deepEqual(navigations, [{ targetId: 'pi-user-1', options: { summarize: false } }])
+})
+
+test('Pi tree extension targets an exact agent response', async () => {
+  const commands = new Map<string, RegisteredCommand>()
+  registerMagPiAcpTree({
+    registerCommand(name, command) {
+      commands.set(name, command)
+    },
+    on() {},
+    appendEntry() {}
+  })
+
+  const fork = commands.get(MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND)
+  const rewind = commands.get(MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND)
+  assert.ok(fork)
+  assert.ok(rewind)
+
+  const response = {
+    id: 'pi-assistant-1',
+    parentId: 'pi-user-1',
+    type: 'message',
+    message: { role: 'assistant', content: 'Done.', timestamp: 1_700_000_000_000 }
+  }
+  const forks: Array<{ targetId: string; options: unknown }> = []
+  const navigations: Array<{ targetId: string; options: unknown }> = []
+  const context = {
+    waitForIdle: async () => {},
+    sessionManager: {
+      getEntries: () => [response],
+      getEntry: (id: string) => (id === response.id ? response : undefined)
+    },
+    fork: async (targetId: string, options: unknown) => {
+      forks.push({ targetId, options })
+      return { cancelled: false }
+    },
+    navigateTree: async (targetId: string, options: unknown) => {
+      navigations.push({ targetId, options })
+      return { cancelled: false }
+    }
+  } as any
+
+  await fork.handler('1700000000000', context)
+  await rewind.handler('pi-assistant-1', context)
+
+  assert.deepEqual(forks, [{ targetId: 'pi-assistant-1', options: { position: 'at' } }])
+  assert.deepEqual(navigations, [{ targetId: 'pi-assistant-1', options: { summarize: false } }])
 })
 
 test('Pi tree extension navigates to a selected user message without summarizing', async () => {

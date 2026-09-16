@@ -125,10 +125,12 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
       const texts = conn.updates
         .map(u => (u as any).update)
         .filter(Boolean)
-        .map(u => ({ kind: u.sessionUpdate, text: u.content?.text }))
+        .map(u => ({ kind: u.sessionUpdate, messageId: u.messageId, text: u.content?.text }))
 
-      assert.ok(texts.some(t => t.kind === 'user_message_chunk' && t.text === 'Hello'))
-      assert.ok(texts.some(t => t.kind === 'agent_message_chunk' && t.text === 'Hi there!'))
+      assert.ok(texts.some(t => t.kind === 'user_message_chunk' && t.messageId === 'a1b2c3d4' && t.text === 'Hello'))
+      assert.ok(
+        texts.some(t => t.kind === 'agent_message_chunk' && t.messageId === 'b2c3d4e5' && t.text === 'Hi there!')
+      )
       assert.deepEqual(conn.updates.find(update => update.update.sessionUpdate === 'plan')?.update, {
         sessionUpdate: 'plan',
         entries: [{ content: 'Verify the restored session', priority: 'medium', status: 'in_progress' }]

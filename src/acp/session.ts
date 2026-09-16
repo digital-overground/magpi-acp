@@ -16,7 +16,6 @@ import { PiRpcProcess, PiRpcSpawnError, type PiRpcEvent } from '../pi-rpc/proces
 import { MAGPI_ACP_TREE_SELECTION_TITLE, MAGPI_ACP_TREE_SUMMARY_TITLE } from '../pi-rpc/tree-command.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { SessionStore } from './session-store.js'
-import { userMessageEntryId } from './pi-session-tree.js'
 import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
 import {
   bashCommand,
@@ -182,7 +181,7 @@ function getEditOldTexts(args: unknown): string[] {
   return oldTexts
 }
 
-function toToolCallLocations(args: unknown, cwd: string, line?: number): ToolCallLocation[] | undefined {
+export function toToolCallLocations(args: unknown, cwd: string, line?: number): ToolCallLocation[] | undefined {
   const path = getToolPath(args)
   if (!path) return undefined
 
@@ -259,17 +258,13 @@ export class SessionManager {
     piCommand?: string
     sourceSessionFile: string
   }): Promise<string> {
-    const entryId = userMessageEntryId(params.sourceSessionFile, params.clientMessageId)
-    if (!entryId) {
-      throw RequestError.invalidParams(`No Pi user message matches client message ${params.clientMessageId}.`)
-    }
     const proc = await PiRpcProcess.spawn({
       cwd: params.cwd,
       piCommand: params.piCommand,
       sessionPath: params.sourceSessionFile
     })
     try {
-      await proc.fork(entryId)
+      await proc.forkClientMessage(params.clientMessageId)
       const state = (await proc.getState()) as {
         sessionFile?: unknown
         sessionId?: unknown
@@ -640,9 +635,11 @@ export class MagPiAcpSession {
 
         // Stream assistant text.
         if (ame?.type === 'text_delta' && typeof ame.delta === 'string') {
+          const timestamp = ame.partial?.timestamp
           this.emit({
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: ame.delta } satisfies ContentBlock
+            content: { type: 'text', text: ame.delta } satisfies ContentBlock,
+            ...(typeof timestamp === 'number' && Number.isFinite(timestamp) ? { messageId: String(timestamp) } : {})
           })
           break
         }

@@ -24,7 +24,7 @@ import {
   type StopReason
 } from '@agentclientprotocol/sdk'
 import { getAuthMethods } from './auth.js'
-import { SessionManager, type MagPiAcpSession } from './session.js'
+import { SessionManager, toToolCallLocations, type MagPiAcpSession } from './session.js'
 import { SessionStore } from './session-store.js'
 import { PiRpcProcess } from '../pi-rpc/process.js'
 import {
@@ -1033,7 +1033,8 @@ export class MagPiAcpAgent implements ACPAgent {
       sessionId: s.sessionId,
       cwd: s.cwd,
       title: s.title,
-      updatedAt: s.updatedAt
+      updatedAt: s.updatedAt,
+      ...(s.preview && s.previewRole ? { _meta: { magPiAcp: { preview: s.preview, previewRole: s.previewRole } } } : {})
     }))
 
     const nextCursor = start + PAGE_SIZE < filtered.length ? String(start + PAGE_SIZE) : null
@@ -1088,8 +1089,21 @@ export class MagPiAcpAgent implements ACPAgent {
     const userMessageEntryIds = activeMessages.length
       ? activeMessages.filter(entry => entry.message.role === 'user').map(entry => entry.id)
       : activeUserMessageEntryIds(stored.sessionFile)
+    const assistantMessageEntryIds = activeMessages
+      .filter(entry => entry.message.role === 'assistant')
+      .map(entry => entry.id)
     let userMessageIndex = 0
+    let assistantMessageIndex = 0
     let todoPlan: ReturnType<typeof todoResultToPlanEntries>
+    const restoredToolArgs = new Map<string, unknown>()
+    for (const message of messages) {
+      if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue
+      for (const block of message.content) {
+        if (block?.type === 'toolCall' && typeof block.id === 'string') {
+          restoredToolArgs.set(block.id, block.arguments)
+        }
+      }
+    }
 
     for (const m of messages) {
       const role = String(m?.role ?? '')
@@ -1121,21 +1135,25 @@ export class MagPiAcpAgent implements ACPAgent {
 
       if (role === 'assistant') {
         const text = normalizePiAssistantText(m?.content)
+        const messageId = assistantMessageEntryIds[assistantMessageIndex]
         if (text) {
           await this.conn.sessionUpdate({
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text }
+              content: { type: 'text', text },
+              ...(messageId ? { messageId } : {})
             }
           })
         }
+        assistantMessageIndex += 1
       }
 
       if (role === 'toolResult') {
         const toolName = String((m as any)?.toolName ?? 'tool')
         if (toolName === 'todo') todoPlan = todoResultToPlanEntries(m) ?? todoPlan
         const toolCallId = String((m as any)?.toolCallId ?? crypto.randomUUID())
+        const rawInput = (m as any)?.args ?? restoredToolArgs.get(toolCallId) ?? null
         const isError = Boolean((m as any)?.isError)
         const isBash = isBashTool(toolName)
 
@@ -1146,7 +1164,7 @@ export class MagPiAcpAgent implements ACPAgent {
             update: {
               sessionUpdate: 'tool_call',
               toolCallId,
-              title: bashCommand(m) ?? toolName,
+              title: bashCommand(rawInput) ?? bashCommand(m) ?? toolName,
               kind: 'execute',
               status: 'completed',
               content: bashTerminalContent(toolCallId),
@@ -1170,6 +1188,7 @@ export class MagPiAcpAgent implements ACPAgent {
         }
 
         // Create a synthetic ACP tool call to render historic tool usage.
+        const locations = toToolCallLocations(rawInput, params.cwd)
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,
           update: {
@@ -1178,8 +1197,9 @@ export class MagPiAcpAgent implements ACPAgent {
             title: toolName,
             kind: toolName === 'read' ? 'read' : toolName === 'write' || toolName === 'edit' ? 'edit' : 'other',
             status: 'completed',
-            rawInput: null,
-            rawOutput: m
+            rawInput,
+            rawOutput: m,
+            ...(locations ? { locations } : {})
           }
         })
 

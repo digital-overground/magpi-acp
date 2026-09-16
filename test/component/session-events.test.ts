@@ -22,7 +22,11 @@ test('MagPiAcpSession: emits agent_message_chunk for text_delta', async () => {
 
   proc.emit({
     type: 'message_update',
-    assistantMessageEvent: { type: 'text_delta', delta: 'hi' }
+    assistantMessageEvent: {
+      type: 'text_delta',
+      delta: 'hi',
+      partial: { timestamp: 1_700_000_000_000 }
+    }
   })
 
   await new Promise(r => setTimeout(r, 0))
@@ -31,7 +35,8 @@ test('MagPiAcpSession: emits agent_message_chunk for text_delta', async () => {
   assert.equal(conn.updates[0]!.sessionId, 's1')
   assert.deepEqual(conn.updates[0]!.update, {
     sessionUpdate: 'agent_message_chunk',
-    content: { type: 'text', text: 'hi' }
+    content: { type: 'text', text: 'hi' },
+    messageId: '1700000000000'
   })
 })
 

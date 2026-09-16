@@ -43,13 +43,13 @@ test('SessionManager forks natively at the selected client message', async () =>
       .join('\n')
   )
 
-  const forkedEntries: string[] = []
+  const forkedMessages: string[] = []
   const rewoundMessages: string[] = []
   const spawnParams: unknown[] = []
   const proc = {
     dispose() {},
-    async fork(entryId: string) {
-      forkedEntries.push(entryId)
+    async forkClientMessage(clientMessageId: string) {
+      forkedMessages.push(clientMessageId)
     },
     async getState() {
       return { sessionFile: '/sessions/fork.jsonl', sessionId: 'fork-session' }
@@ -80,7 +80,7 @@ test('SessionManager forks natively at the selected client message', async () =>
     PiRpcProcess.spawn = originalSpawn
   }
 
-  assert.deepEqual(forkedEntries, ['user-2'])
+  assert.deepEqual(forkedMessages, ['client-message-2'])
   assert.deepEqual(rewoundMessages, [])
   assert.deepEqual(spawnParams, [{ cwd: directory, piCommand: undefined, sessionPath: sourceSessionFile }])
   assert.deepEqual(stored, [{ cwd: directory, sessionFile: '/sessions/fork.jsonl', sessionId: 'fork-session' }])

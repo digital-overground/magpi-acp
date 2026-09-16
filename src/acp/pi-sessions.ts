@@ -7,6 +7,8 @@ export type PiSessionListItem = {
   cwd: string
   title: string | null
   updatedAt: string | null
+  preview: string | null
+  previewRole: 'user' | 'assistant' | null
   sessionFile: string
 }
 
@@ -188,6 +190,44 @@ function scanSessionInfoNameFromFile(path: string): string | null {
   }
 }
 
+function messageText(content: unknown): string | null {
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .flatMap(block =>
+              block && typeof block === 'object' && (block as Record<string, unknown>).type === 'text'
+                ? [(block as Record<string, unknown>).text]
+                : []
+            )
+            .filter((value): value is string => typeof value === 'string')
+            .join(' ')
+        : ''
+  const preview = text.split('\n[Embedded Context] ', 1)[0]?.replace(/\s+/g, ' ').trim()
+  return preview ? preview.slice(0, 160) : null
+}
+
+function pickPreviewFromTail(tail: string): { preview: string; previewRole: 'user' | 'assistant' } | null {
+  const messages: { preview: string; previewRole: 'user' | 'assistant' }[] = []
+  for (const line of tail.split(/\r?\n/)) {
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>
+      if (entry.type !== 'message' || !entry.message || typeof entry.message !== 'object') continue
+      const message = entry.message as Record<string, unknown>
+      if (message.role !== 'user' && message.role !== 'assistant') continue
+      const preview = messageText(message.content)
+      if (preview) messages.push({ preview, previewRole: message.role })
+    } catch {
+      // Ignore malformed and incomplete lines.
+    }
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.previewRole === 'user') return messages[index] ?? null
+  }
+  return messages[messages.length - 1] ?? null
+}
+
 function pickUpdatedAtFromTail(tail: string): string | null {
   // pi's `/resume` effectively orders sessions by last *message* activity.
   // We scan backwards and pick the timestamp of the most recent entry with type === "message".
@@ -276,12 +316,17 @@ export function listPiSessions(): PiSessionListItem[] {
     if (!header) continue
 
     let updatedAt: string | null = null
+    let preview: string | null = null
+    let previewRole: 'user' | 'assistant' | null = null
 
     let title: string | null = null
     try {
       const tail = readTail(file)
       title = pickTitleFromTail(tail)
       updatedAt = pickUpdatedAtFromTail(tail)
+      const pickedPreview = pickPreviewFromTail(tail)
+      preview = pickedPreview?.preview ?? null
+      previewRole = pickedPreview?.previewRole ?? null
     } catch {
       // ignore
     }
@@ -309,6 +354,8 @@ export function listPiSessions(): PiSessionListItem[] {
       cwd: header.cwd,
       title,
       updatedAt,
+      preview,
+      previewRole,
       sessionFile: file
     })
   }

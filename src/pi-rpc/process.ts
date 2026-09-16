@@ -3,7 +3,11 @@ import { existsSync } from 'node:fs'
 import * as readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { getPiCommand, shouldUseShellForPiCommand } from './command.js'
-import { MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND, MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND } from './tree-command.js'
+import {
+  MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND,
+  MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
+  MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND
+} from './tree-command.js'
 
 export class PiRpcSpawnError extends Error {
   /** Underlying spawn error code, e.g. ENOENT, EACCES */
@@ -251,6 +255,10 @@ export class PiRpcProcess {
 
   async markClientMessage(clientMessageId: string): Promise<void> {
     await this.prompt(`/${MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
+  }
+
+  async forkClientMessage(clientMessageId: string): Promise<void> {
+    await this.prompt(`/${MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
   }
 
   async rewindClientMessage(clientMessageId: string): Promise<void> {
