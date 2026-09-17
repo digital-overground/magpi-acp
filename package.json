@@ -1,7 +1,7 @@
 {
   "name": "magpi-acp",
   "version": "0.1.0",
-  "description": "MagPi ACP adapter for the Pi coding agent",
+  "description": "Pi ACP runtime adapter for Mischief",
   "license": "MIT",
   "author": "Kyle Humphrey",
   "repository": {
@@ -20,6 +20,7 @@
     "acp",
     "agent-client-protocol",
     "pi-coding-agent",
+    "mischief",
     "adapter"
   ],
   "engines": {
@@ -60,8 +61,5 @@
     "tsx": "^4.0.0",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.18.0"
-  },
-  "contributors": [
-    "Sergii Kozak <svkozak@gmail.com>"
-  ]
+  }
 }

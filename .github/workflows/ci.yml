@@ -11,10 +11,31 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      - name: Require dev source for main
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [[ "$HEAD_REF" != "dev" || "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo "::error::Pull requests to main must come from this repository's dev branch."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
+      - name: Require an unpublished version for main
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        run: |
+          PACKAGE=$(node -p "const { name, version } = require('./package.json'); name + '@' + version")
+          if npm view "$PACKAGE" version >/dev/null 2>&1; then
+            echo "::error::$PACKAGE is already published. Bump the version in this PR."
+            exit 1
+          fi
+
       - run: npm ci
       - run: npm run check
