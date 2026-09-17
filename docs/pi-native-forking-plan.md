@@ -21,7 +21,7 @@ Use Pi's RPC session operations as the only fork implementation:
 - Adopt Pi's native user-message fork semantics now.
 - Remove fork actions from assistant messages rather than retaining a `position: "at"` shim.
 - Keep one implementation. Do not add client-name detection, a Mischief mode, or a second adapter path.
-- Reuse the existing `_meta["magpi-acp/client-message-id"]` only where ACP has no standard target field. Do not introduce another fork metadata shape.
+- Reuse the existing `_meta["magpi-acp/client-message-id"]` as the one correlation field bridging a Mischief user item to a Pi entry. Do not introduce another fork metadata shape.
 - Keep `/tree` and rollback behavior separate from this migration. Pi RPC does not currently expose same-session tree navigation, so those operations may continue to use the bundled extension.
 - Do not rewrite existing Pi JSONL files. Historical `magpi-acp-client-message` entries are harmless and remain readable.
 
@@ -60,7 +60,7 @@ Set and document Pi **0.80.4** as the minimum:
 - `get_entries` was added in 0.80.3;
 - `agent_settled`, needed to capture persisted entry IDs reliably, was added in 0.80.4.
 
-Do not add a compatibility implementation for older Pi versions. Probe required RPC commands and return a clear upgrade error when they are unavailable.
+Do not add a compatibility implementation for older Pi versions. Feature-check `get_entries`, and translate unknown `clone`/`fork` command failures into a clear upgrade error.
 
 ## Current flow to remove
 
@@ -177,7 +177,7 @@ Delete from the extension:
 - the client-message marker command and pending marker state;
 - `magpi-acp-client-message` writes;
 - the custom fork command;
-- fork-specific marker/timestamp resolution.
+- marker-based target resolution and all fork dispatch logic.
 
 For rollback, MagPi should resolve a live user UUID through the same in-memory map before invoking the rewind command. Replayed user IDs already resolve directly. Existing assistant rollback may retain its timestamp-to-entry fallback; changing rollback semantics is outside this fork migration.
 
@@ -359,13 +359,13 @@ Add the no-metadata fork flow to the smallest existing smoke script rather than 
 
 ### Mischief
 
-| File                                                               | Purpose                                   |
-| ------------------------------------------------------------------ | ----------------------------------------- |
-| `src/threads/threads.ts`                                           | Enforce user-only fork targets            |
-| `src/threads/threads.test.ts`                                      | User fork success and assistant rejection |
-| `src/webview/threads/detail/composer/controls/history-control.tsx` | Hide fork on assistant rows               |
-| Relevant Webview control test                                      | Verify visible actions by message kind    |
-| `CONTEXT.md` / `README.md` if wording exists                       | Record Pi-native user-message semantics   |
+| File                                                                    | Purpose                                   |
+| ----------------------------------------------------------------------- | ----------------------------------------- |
+| `src/threads/threads.ts`                                                | Enforce user-only fork targets            |
+| `src/threads/threads.test.ts`                                           | User fork success and assistant rejection |
+| `src/webview/threads/detail/composer/controls/history-control.tsx`      | Hide fork on assistant rows               |
+| `src/webview/threads/detail/composer/controls/footer-controls.test.tsx` | Verify visible actions by message kind    |
+| `CONTEXT.md` / `README.md` if wording exists                            | Record Pi-native user-message semantics   |
 
 Avoid changing persistence schemas, adding dependencies, or introducing new modules unless the existing files cannot hold the behavior cleanly.
 
