@@ -1,32 +1,28 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
+import assert from "node:assert/strict";
+import test from "node:test";
 
-// This is a lightweight regression test: our stdout writer should not throw
-// if stdout is marked as destroyed.
+import { replaceProperty } from "../helpers/fakes.js";
 
-test('stdout writer: resolves even if stdout is destroyed', async () => {
-  const prevDestroyed = (process.stdout as any).destroyed
-  const prevWritable = (process.stdout as any).writable
+const write = async (chunk: Uint8Array): Promise<void> => {
+  await Promise.resolve();
+  if (process.stdout.destroyed || !process.stdout.writable) {
+    return;
+  }
+  process.stdout.write(chunk);
+};
+
+void test("stdout writer: resolves even if stdout is destroyed", async () => {
+  const prevDestroyed = process.stdout.destroyed;
+  const prevWritable = process.stdout.writable;
 
   try {
-    ;(process.stdout as any).destroyed = true
-    ;(process.stdout as any).writable = false
+    replaceProperty(process.stdout, "destroyed", true);
+    replaceProperty(process.stdout, "writable", false);
 
-    // Inline copy of the writer logic from src/index.ts (kept intentionally tiny)
-    const write = (chunk: Uint8Array) =>
-      new Promise<void>(resolve => {
-        if ((process.stdout as any).destroyed || !process.stdout.writable) return resolve()
-        try {
-          process.stdout.write(chunk, () => resolve())
-        } catch {
-          resolve()
-        }
-      })
-
-    await write(new Uint8Array([1, 2, 3]))
-    assert.ok(true)
+    await write(new Uint8Array([1, 2, 3]));
+    assert.ok(true);
   } finally {
-    ;(process.stdout as any).destroyed = prevDestroyed
-    ;(process.stdout as any).writable = prevWritable
+    replaceProperty(process.stdout, "destroyed", prevDestroyed);
+    replaceProperty(process.stdout, "writable", prevWritable);
   }
-})
+});

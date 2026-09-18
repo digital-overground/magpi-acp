@@ -1,56 +1,65 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { MagPiAcpAgent } from '../../src/acp/agent.js'
-import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
-import { PiRpcProcess } from '../../src/pi-rpc/process.js'
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
 
-test('MagPiAcpAgent: does not emit startup info on loadSession', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-startup-load-'))
-  const sessionsDir = join(root, 'sessions', '--tmp--project--')
-  const previousAgentDir = process.env.PI_CODING_AGENT_DIR
-  mkdirSync(sessionsDir, { recursive: true })
+import { MagPiAcpAgent } from "../../src/acp/agent.js";
+import {
+  FakeAgentSideConnection,
+  FakePiRpcProcess,
+  asAgentConn,
+  mockPiSpawn,
+  replaceProperty,
+} from "../helpers/fakes.js";
+
+void test("MagPiAcpAgent: does not emit startup info on loadSession", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-startup-load-"));
+  const sessionsDir = path.join(root, "sessions", "--tmp--project--");
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  mkdirSync(sessionsDir, { recursive: true });
   writeFileSync(
-    join(sessionsDir, '0000_s1.jsonl'),
-    JSON.stringify({ type: 'session', id: 's1', cwd: '/tmp/project' }) + '\n',
-    'utf8'
-  )
-  process.env.PI_CODING_AGENT_DIR = root
+    path.join(sessionsDir, "0000_s1.jsonl"),
+    `${JSON.stringify({ cwd: "/tmp/project", id: "s1", type: "session" })}\n`,
+    "utf-8"
+  );
+  process.env.PI_CODING_AGENT_DIR = root;
 
-  // spy on timers (commands update is scheduled)
-  const realSetTimeout = globalThis.setTimeout
-  const timeouts: Array<unknown> = []
-  ;(globalThis as any).setTimeout = (fn: unknown, _ms?: number) => {
-    timeouts.push(fn)
-    return 0 as any
-  }
+  const realSetTimeout = globalThis.setTimeout;
+  const timeouts: unknown[] = [];
+  replaceProperty(globalThis, "setTimeout", (scheduledTask: unknown) => {
+    timeouts.push(scheduledTask);
+    return 0;
+  });
 
-  const originalSpawn = PiRpcProcess.spawn
-  ;(PiRpcProcess as any).spawn = async () => {
-    return {
-      onEvent: () => () => {},
-      getMessages: async () => ({ messages: [] }),
-      getAvailableModels: async () => ({ models: [] }),
-      getState: async () => ({ thinkingLevel: 'medium' })
-    } as any
-  }
+  const proc = new FakePiRpcProcess();
+  proc.availableModels = { models: [] };
+  proc.messages = { messages: [] };
+  proc.state = { thinkingLevel: "medium" };
+  const restoreSpawn = mockPiSpawn(async () => {
+    await Promise.resolve();
+    return proc.process;
+  });
 
   try {
-    const conn = new FakeAgentSideConnection()
-    const agent = new MagPiAcpAgent(asAgentConn(conn))
+    const conn = new FakeAgentSideConnection();
+    const agent = new MagPiAcpAgent(asAgentConn(conn));
 
-    const res = await agent.loadSession({ sessionId: 's1', cwd: '/tmp/project', mcpServers: [] } as any)
+    const result = await agent.loadSession({
+      cwd: "/tmp/project",
+      mcpServers: [],
+      sessionId: "s1",
+    });
 
-    assert.equal('_meta' in res, false)
-
-    // Only available_commands_update should be scheduled.
-    assert.equal(timeouts.length, 1)
+    assert.equal("_meta" in result, false);
+    assert.equal(timeouts.length, 1);
   } finally {
-    ;(globalThis as any).setTimeout = realSetTimeout
-    PiRpcProcess.spawn = originalSpawn
-    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR
-    else process.env.PI_CODING_AGENT_DIR = previousAgentDir
+    replaceProperty(globalThis, "setTimeout", realSetTimeout);
+    restoreSpawn();
+    if (previousAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    }
   }
-})
+});

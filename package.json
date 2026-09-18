@@ -2,45 +2,42 @@
   "name": "magpi-acp",
   "version": "0.1.0",
   "description": "Pi ACP runtime adapter for Mischief",
+  "keywords": [
+    "acp",
+    "adapter",
+    "agent-client-protocol",
+    "mischief",
+    "pi-coding-agent"
+  ],
+  "homepage": "https://github.com/digital-overground/magpi-acp#readme",
+  "bugs": {
+    "url": "https://github.com/digital-overground/magpi-acp/issues"
+  },
   "license": "MIT",
   "author": "Kyle Humphrey",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/digital-overground/magpi-acp.git"
   },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
-  "bugs": {
-    "url": "https://github.com/digital-overground/magpi-acp/issues"
-  },
-  "homepage": "https://github.com/digital-overground/magpi-acp#readme",
-  "keywords": [
-    "acp",
-    "agent-client-protocol",
-    "pi-coding-agent",
-    "mischief",
-    "adapter"
-  ],
-  "engines": {
-    "node": ">=22"
-  },
-  "type": "module",
-  "main": "dist/index.js",
   "bin": {
     "magpi-acp": "dist/index.js"
   },
   "files": [
     "dist"
   ],
+  "type": "module",
+  "main": "dist/index.js",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsup",
     "start": "node dist/index.js",
-    "format": "prettier . --write",
+    "format": "ultracite fix",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "ultracite check",
     "test": "node --import tsx --test test/**/*.test.ts",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "smoke": "node scripts/smoke-acp.mjs",
@@ -52,14 +49,16 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.17.0",
     "@types/node": "^22.0.0",
-    "eslint": "^9.17.0",
-    "globals": "^15.14.0",
-    "prettier": "^3.8.3",
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0",
+    "oxlint-tsgolint": "^7.0.2002",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.6.0",
-    "typescript-eslint": "^8.18.0"
+    "ultracite": "^7.12.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
