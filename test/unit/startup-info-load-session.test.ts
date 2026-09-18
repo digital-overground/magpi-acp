@@ -8,6 +8,13 @@ import { MagPiAcpAgent } from "../../src/acp/agent.js";
 import { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
 
+const processClass = PiRpcProcess as unknown as {
+  spawn: typeof PiRpcProcess.spawn;
+};
+const timeoutOwner = globalThis as unknown as {
+  setTimeout: typeof globalThis.setTimeout;
+};
+
 test("MagPiAcpAgent: does not emit startup info on loadSession", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-startup-load-"));
   const sessionsDir = path.join(root, "sessions", "--tmp--project--");
@@ -20,47 +27,37 @@ test("MagPiAcpAgent: does not emit startup info on loadSession", async () => {
   );
   process.env.PI_CODING_AGENT_DIR = root;
 
-  // spy on timers (commands update is scheduled)
   const realSetTimeout = globalThis.setTimeout;
   const timeouts: unknown[] = [];
-  (globalThis as unknown as { setTimeout: unknown }).setTimeout = (
-    fn: unknown,
-    _ms?: number
-  ) => {
-    timeouts.push(fn);
-    return 0 as never;
-  };
+  timeoutOwner.setTimeout = ((scheduledTask: unknown) => {
+    timeouts.push(scheduledTask);
+    return 0;
+  }) as unknown as typeof globalThis.setTimeout;
 
   const originalSpawn = PiRpcProcess.spawn;
-  (PiRpcProcess as unknown as { spawn: unknown }).spawn = () =>
-    ({
-      getAvailableModels: () => ({ models: [] }),
-      getMessages: () => ({ messages: [] }),
-      getState: () => ({ thinkingLevel: "medium" }),
+  processClass.spawn = () =>
+    Promise.resolve({
+      getAvailableModels: () => Promise.resolve({ models: [] }),
+      getMessages: () => Promise.resolve({ messages: [] }),
+      getState: () => Promise.resolve({ thinkingLevel: "medium" }),
       onEvent: () => () => {},
-    }) as never;
+    } as unknown as PiRpcProcess);
 
   try {
     const conn = new FakeAgentSideConnection();
     const agent = new MagPiAcpAgent(asAgentConn(conn));
 
-    const res = await agent.loadSession({
+    const result = await agent.loadSession({
       cwd: "/tmp/project",
       mcpServers: [],
       sessionId: "s1",
-    } as never);
+    });
 
-    const metadata = res as {
-      _meta?: { magPiAcp?: { startupInfo?: unknown } };
-    };
-    assert.equal(metadata._meta?.magPiAcp?.startupInfo, null);
-
-    // Only available_commands_update should be scheduled.
+    assert.equal("_meta" in result, false);
     assert.equal(timeouts.length, 1);
   } finally {
-    (globalThis as unknown as { setTimeout: unknown }).setTimeout =
-      realSetTimeout;
-    PiRpcProcess.spawn = originalSpawn;
+    timeoutOwner.setTimeout = realSetTimeout;
+    processClass.spawn = originalSpawn;
     if (previousAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {

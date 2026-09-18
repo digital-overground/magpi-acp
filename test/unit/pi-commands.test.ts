@@ -3,10 +3,15 @@ import test from "node:test";
 
 import { toAvailableCommandsFromPiGetCommands } from "../../src/acp/pi-commands.js";
 
-test("toAvailableCommandsFromPiGetCommands: hides extension commands by default and filters skill commands", () => {
+test("toAvailableCommandsFromPiGetCommands: exposes Pi extension, skill, and prompt commands", () => {
   const data = {
     commands: [
       { description: "X", name: "x", source: "extension" },
+      {
+        description: "internal",
+        name: "__magpi_acp_internal_navigate_tree",
+        source: "extension",
+      },
       {
         description: "Foo",
         location: "user",
@@ -17,26 +22,9 @@ test("toAvailableCommandsFromPiGetCommands: hides extension commands by default 
     ],
   };
 
-  const all = toAvailableCommandsFromPiGetCommands(data, {
-    enableSkillCommands: true,
-  }).commands;
-  assert.deepEqual(all, [
-    { description: "Foo", name: "skill:foo" },
-    { description: "(prompt:project)", name: "y" },
-  ]);
-
-  const includeExt = toAvailableCommandsFromPiGetCommands(data, {
-    enableSkillCommands: true,
-    includeExtensionCommands: true,
-  }).commands;
-  assert.deepEqual(includeExt, [
+  assert.deepEqual(toAvailableCommandsFromPiGetCommands(data), [
     { description: "X", name: "x" },
     { description: "Foo", name: "skill:foo" },
     { description: "(prompt:project)", name: "y" },
   ]);
-
-  const noSkills = toAvailableCommandsFromPiGetCommands(data, {
-    enableSkillCommands: false,
-  }).commands;
-  assert.deepEqual(noSkills, [{ description: "(prompt:project)", name: "y" }]);
 });

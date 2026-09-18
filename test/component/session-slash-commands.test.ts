@@ -2,29 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MagPiAcpSession } from "../../src/acp/session.js";
+import type { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
 } from "../helpers/fakes.js";
 
-test("MagPiAcpSession: expands /command before sending to pi", async () => {
+test("MagPiAcpSession: passes slash commands to Pi for native expansion", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
   const session = new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [
-      {
-        content: "Expanded $1",
-        description: "(user)",
-        name: "hello",
-        source: "(user)",
-      },
-    ],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -38,5 +31,5 @@ test("MagPiAcpSession: expands /command before sending to pi", async () => {
 
   assert.equal(reason, "end_turn");
   assert.equal(proc.prompts.length, 1);
-  assert.equal(proc.prompts.at(0)?.message, "Expanded world");
+  assert.equal(proc.prompts[0]?.message, "/hello world");
 });

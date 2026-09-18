@@ -1,5 +1,7 @@
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
 
+import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from "../pi-rpc/tree-command.js";
+
 export interface PiRpcCommandInfo {
   name?: unknown;
   description?: unknown;
@@ -37,31 +39,15 @@ const commandList = (data: unknown): PiRpcCommandInfo[] => {
 };
 
 export const toAvailableCommandsFromPiGetCommands = (
-  data: unknown,
-  opts?: { enableSkillCommands?: boolean; includeExtensionCommands?: boolean }
-): {
-  commands: AvailableCommand[];
-  raw: PiRpcCommandInfo[];
-} => {
-  const enableSkillCommands = opts?.enableSkillCommands ?? true;
-  const includeExtensionCommands = opts?.includeExtensionCommands ?? false;
-
+  data: unknown
+): AvailableCommand[] => {
   const commandsRaw = commandList(data);
 
   const out: AvailableCommand[] = [];
 
   for (const c of commandsRaw) {
     const name = typeof c?.name === "string" ? c.name.trim() : "";
-    if (!name) {
-      continue;
-    }
-
-    const source = typeof c?.source === "string" ? c.source : "";
-    if (!includeExtensionCommands && source === "extension") {
-      continue;
-    }
-
-    if (!enableSkillCommands && name.startsWith("skill:")) {
+    if (!name || name === MAGPI_ACP_NAVIGATE_TREE_COMMAND) {
       continue;
     }
 
@@ -73,5 +59,5 @@ export const toAvailableCommandsFromPiGetCommands = (
     });
   }
 
-  return { commands: out, raw: commandsRaw };
+  return out;
 };

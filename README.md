@@ -14,14 +14,21 @@ MagPi ACP provides the Agent runtime behind Mischief Threads:
 
 - Streams messages, thoughts, tool calls, plans, usage, and structured diffs.
 - Lists, loads, and resumes Pi sessions for Mischief Thread History.
-- Supports message-targeted Thread forks and rollback through Pi's native session tree.
+- Supports standard current-leaf forks plus optional Pi-native fork and tree pickers.
 - Exposes role, model, and thinking controls.
 - Maps Pi extension prompts to inline Mischief elicitation.
 - Advertises Terminal Auth so Mischief can open Pi setup in an integrated terminal.
-- Generates a short title from the first prompt and supports persistent manual titles.
-- Loads Pi skills and file-based prompt commands.
+- Uses first-prompt history titles and supports persistent manual Pi session names.
+- Exposes Pi's native extension, skill, and prompt-template commands.
 
-Mischief and MagPi ACP should be updated together because Thread fork and rollback use MagPi-specific ACP metadata in addition to standard ACP methods.
+Standard ACP behavior does not require private metadata. Optional Mischief integration uses:
+
+- `magpi-acp/fork-picker`, `magpi-acp/tree-picker`, and the corresponding `_magpi-acp/session/*` methods for native Pi selectors;
+- `_meta["magpi-acp/fork-entry-id"]` for the user-entry ID selected by the fork picker;
+- `_meta.magPiAcp.preview` and `previewRole` for History previews;
+- negotiated `terminal-auth` and `terminal_*` metadata for Mischief's integrated terminal UI.
+
+Clients may omit or discard all of these fields; standard create, prompt, current-leaf fork, list, and load behavior remains complete.
 
 ## Requirements
 

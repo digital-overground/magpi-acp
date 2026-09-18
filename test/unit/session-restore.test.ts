@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,44 +8,53 @@ import { MagPiAcpAgent } from "../../src/acp/agent.js";
 import { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
 
-interface RestoredSession {
-  sessionId: string;
-  [key: string]: unknown;
-}
-
-interface SpawnArguments {
+type SpawnParams = Parameters<typeof PiRpcProcess.spawn>[0];
+interface SessionBuildParams {
   cwd: string;
-  piCommand?: string;
-  sessionPath?: string;
+  proc: PiRpcProcess;
 }
+type UnknownRecord = Record<string, unknown>;
+
+const asRecord = (value: unknown): UnknownRecord => {
+  assert.ok(value !== null && typeof value === "object");
+  return value as UnknownRecord;
+};
 
 class FakeSessions {
+  restoredSession: unknown;
   private readonly buildSession: (
     sessionId: string,
-    params: Record<string, unknown>
-  ) => RestoredSession;
-  restoredSession: RestoredSession | undefined;
+    params: SessionBuildParams
+  ) => unknown;
 
   constructor(
-    buildSession: (
-      sessionId: string,
-      params: Record<string, unknown>
-    ) => RestoredSession
+    buildSession: (sessionId: string, params: SessionBuildParams) => unknown
   ) {
     this.buildSession = buildSession;
   }
 
-  maybeGet(sessionId: string) {
-    return this.restoredSession?.sessionId === sessionId
+  maybeGet(sessionId: string): unknown {
+    if (this.restoredSession === undefined) {
+      return undefined;
+    }
+    return asRecord(this.restoredSession).sessionId === sessionId
       ? this.restoredSession
       : undefined;
   }
 
-  getOrCreate(sessionId: string, params: Record<string, unknown>) {
+  getOrCreate(sessionId: string, params: SessionBuildParams): unknown {
     this.restoredSession ??= this.buildSession(sessionId, params);
     return this.restoredSession;
   }
 }
+
+const processClass = PiRpcProcess as unknown as {
+  spawn: typeof PiRpcProcess.spawn;
+};
+
+const setSessions = (agent: MagPiAcpAgent, sessions: FakeSessions): void => {
+  (agent as unknown as { sessions: unknown }).sessions = sessions;
+};
 
 test("MagPiAcpAgent: prompt restores a missing live session through Pi discovery", async () => {
   const conn = new FakeAgentSideConnection();
@@ -54,49 +63,48 @@ test("MagPiAcpAgent: prompt restores a missing live session through Pi discovery
   const sessionFile = path.join(sessionsDir, "0000_discovered.jsonl");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const promptCalls: unknown[][] = [];
-  const spawnCalls: SpawnArguments[] = [];
+  const spawnCalls: SpawnParams[] = [];
 
   mkdirSync(sessionsDir, { recursive: true });
   writeFileSync(
     sessionFile,
-    `${JSON.stringify({ cwd: "/tmp/store-project", id: "discovered-session", type: "session" })}\n`,
+    `${JSON.stringify({
+      cwd: "/tmp/store-project",
+      id: "discovered-session",
+      type: "session",
+    })}\n`,
     "utf-8"
   );
   process.env.PI_CODING_AGENT_DIR = root;
 
   const sessions = new FakeSessions((sessionId, params) => ({
-    async cancel() {},
+    cancel: () => Promise.resolve(),
     cwd: params.cwd,
     proc: params.proc,
-    prompt(...args: unknown[]) {
+    prompt: (...args: unknown[]) => {
       promptCalls.push(args);
-      return "end_turn";
+      return Promise.resolve("end_turn");
     },
     sessionId,
-    wasCancelRequested() {
-      return false;
-    },
+    wasCancelRequested: () => false,
   }));
 
   const originalSpawn = PiRpcProcess.spawn;
-  (PiRpcProcess as unknown as { spawn: unknown }).spawn = (
-    params: SpawnArguments
-  ) => {
+  processClass.spawn = (params) => {
     spawnCalls.push(params);
-    return {
+    return Promise.resolve({
       onEvent: () => () => {},
-    } as never;
+    } as unknown as PiRpcProcess);
   };
 
   try {
-    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
-    (agent as unknown as { sessions: unknown }).sessions = sessions as never;
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+    setSessions(agent, sessions);
 
     const result = await agent.prompt({
-      _meta: { "magpi-acp/client-message-id": "client-message-1" },
       prompt: [{ text: "hello again", type: "text" }],
       sessionId: "discovered-session",
-    } as never);
+    });
 
     assert.equal(result.stopReason, "end_turn");
     assert.deepEqual(spawnCalls, [
@@ -108,7 +116,7 @@ test("MagPiAcpAgent: prompt restores a missing live session through Pi discovery
     ]);
     assert.deepEqual(promptCalls, [["hello again", []]]);
   } finally {
-    PiRpcProcess.spawn = originalSpawn;
+    processClass.spawn = originalSpawn;
     if (previousAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
@@ -122,7 +130,7 @@ test("MagPiAcpAgent: setSessionConfigOption auto-restores via Pi session discove
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-restore-fallback-"));
   const sessionsDir = path.join(root, "sessions", "--tmp--fallback-project--");
   const sessionFile = path.join(sessionsDir, "0000_restore_fallback.jsonl");
-  const prevAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
   mkdirSync(sessionsDir, { recursive: true });
   writeFileSync(
@@ -139,8 +147,8 @@ test("MagPiAcpAgent: setSessionConfigOption auto-restores via Pi session discove
 
   process.env.PI_CODING_AGENT_DIR = root;
 
-  const setModelCalls: { provider: string; modelId: string }[] = [];
-  const spawnCalls: SpawnArguments[] = [];
+  const setModelCalls: { modelId: string; provider: string }[] = [];
+  const spawnCalls: SpawnParams[] = [];
   const state = {
     model: { id: "alpha", provider: "test" },
     thinkingLevel: "medium",
@@ -153,35 +161,35 @@ test("MagPiAcpAgent: setSessionConfigOption auto-restores via Pi session discove
   }));
 
   const originalSpawn = PiRpcProcess.spawn;
-  (PiRpcProcess as unknown as { spawn: unknown }).spawn = (
-    params: SpawnArguments
-  ) => {
+  processClass.spawn = (params) => {
     spawnCalls.push(params);
-    return {
-      getAvailableModels: () => ({
-        models: [
-          { id: "alpha", name: "Alpha", provider: "test" },
-          { id: "beta", name: "Beta", provider: "test" },
-        ],
-      }),
-      getState: () => state,
+    return Promise.resolve({
+      getAvailableModels: () =>
+        Promise.resolve({
+          models: [
+            { id: "alpha", name: "Alpha", provider: "test" },
+            { id: "beta", name: "Beta", provider: "test" },
+          ],
+        }),
+      getState: () => Promise.resolve(state),
       onEvent: () => () => {},
-      setModel(provider: string, modelId: string) {
+      setModel: (provider: string, modelId: string) => {
         setModelCalls.push({ modelId, provider });
         state.model = { id: modelId, provider };
+        return Promise.resolve(state);
       },
-    } as never;
+    } as unknown as PiRpcProcess);
   };
 
   try {
-    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
-    (agent as unknown as { sessions: unknown }).sessions = sessions as never;
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+    setSessions(agent, sessions);
 
     const result = await agent.setSessionConfigOption({
       configId: "model",
       sessionId: "fallback-session",
       value: "test/beta",
-    } as never);
+    });
 
     assert.deepEqual(spawnCalls, [
       {
@@ -206,42 +214,41 @@ test("MagPiAcpAgent: setSessionConfigOption auto-restores via Pi session discove
       },
     ]);
   } finally {
-    PiRpcProcess.spawn = originalSpawn;
-    if (prevAgentDir === undefined) {
+    processClass.spawn = originalSpawn;
+    if (previousAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
-      process.env.PI_CODING_AGENT_DIR = prevAgentDir;
+      process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     }
   }
 });
 
 test("MagPiAcpAgent: cancel ignores stale session IDs without spawning a restore process", async () => {
   const conn = new FakeAgentSideConnection();
-  const spawnCalls: SpawnArguments[] = [];
+  const spawnCalls: SpawnParams[] = [];
 
   const originalSpawn = PiRpcProcess.spawn;
-  (PiRpcProcess as unknown as { spawn: unknown }).spawn = (
-    params: SpawnArguments
-  ) => {
+  processClass.spawn = (params) => {
     spawnCalls.push(params);
-    return {
+    return Promise.resolve({
       onEvent: () => () => {},
-    } as never;
+    } as unknown as PiRpcProcess);
   };
 
   try {
-    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
-    (agent as unknown as { sessions: unknown }).sessions = new FakeSessions(
-      () => {
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+    setSessions(
+      agent,
+      new FakeSessions(() => {
         throw new Error("cancel should not restore a missing session");
-      }
-    ) as never;
+      })
+    );
 
-    await agent.cancel({ sessionId: "stale-session" } as never);
+    await agent.cancel({ sessionId: "stale-session" });
 
     assert.deepEqual(spawnCalls, []);
     assert.deepEqual(conn.updates, []);
   } finally {
-    PiRpcProcess.spawn = originalSpawn;
+    processClass.spawn = originalSpawn;
   }
 });

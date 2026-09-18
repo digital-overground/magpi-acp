@@ -17,8 +17,6 @@ import { RequestError } from "@agentclientprotocol/sdk";
 import { PiRpcProcess, PiRpcSpawnError } from "../pi-rpc/process.js";
 import type { PiRpcEvent } from "../pi-rpc/process.js";
 import { maybeAuthRequiredError } from "./auth-required.js";
-import { expandSlashCommand } from "./slash-commands.js";
-import type { FileSlashCommand } from "./slash-commands.js";
 import {
   bashCommand,
   bashExitCode,
@@ -40,7 +38,6 @@ interface SessionCreateParams {
   mcpServers: McpServer[];
   conn: AgentSideConnection;
   supportsFormElicitation?: boolean;
-  fileCommands?: FileSlashCommand[];
   piCommand?: string;
 }
 
@@ -472,7 +469,6 @@ export class MagPiAcpSession {
   readonly proc: PiRpcProcess;
   private readonly conn: AgentSideConnection;
   private readonly supportsFormElicitation: boolean;
-  private readonly fileCommands: FileSlashCommand[];
 
   // Used to map abort semantics to ACP stopReason.
   // Applies to the currently running turn.
@@ -513,7 +509,6 @@ export class MagPiAcpSession {
     proc: PiRpcProcess;
     conn: AgentSideConnection;
     supportsFormElicitation?: boolean;
-    fileCommands?: FileSlashCommand[];
   }) {
     this.sessionId = opts.sessionId;
     this.cwd = opts.cwd;
@@ -521,7 +516,6 @@ export class MagPiAcpSession {
     this.proc = opts.proc;
     this.conn = opts.conn;
     this.supportsFormElicitation = opts.supportsFormElicitation ?? false;
-    this.fileCommands = opts.fileCommands ?? [];
 
     this.proc.onEvent((ev) => this.handlePiEvent(ev));
   }
@@ -556,16 +550,8 @@ export class MagPiAcpSession {
   }
 
   prompt(message: string, images: unknown[] = []): Promise<StopReason> {
-    // pi RPC mode disables slash command expansion, so we do it here.
-    const expandedMessage = expandSlashCommand(message, this.fileCommands);
-
     const { promise, reject, resolve } = deferred<StopReason>();
-    const queued: QueuedTurn = {
-      images,
-      message: expandedMessage,
-      reject,
-      resolve,
-    };
+    const queued: QueuedTurn = { images, message, reject, resolve };
 
     if (this.pendingTurn) {
       this.turnQueue.push(queued);
@@ -575,12 +561,6 @@ export class MagPiAcpSession {
           type: "text",
         },
         sessionUpdate: "agent_message_chunk",
-      });
-      this.emit({
-        _meta: {
-          magPiAcp: { queueDepth: this.turnQueue.length, running: true },
-        },
-        sessionUpdate: "session_info_update",
       });
     } else {
       this.startTurn(queued);
@@ -602,12 +582,6 @@ export class MagPiAcpSession {
       this.emit({
         content: { text: "Cleared queued prompts.", type: "text" },
         sessionUpdate: "agent_message_chunk",
-      });
-      this.emit({
-        _meta: {
-          magPiAcp: { queueDepth: 0, running: Boolean(this.pendingTurn) },
-        },
-        sessionUpdate: "session_info_update",
       });
     }
 
@@ -709,12 +683,6 @@ export class MagPiAcpSession {
 
     this.pendingTurn = { reject: t.reject, resolve: t.resolve };
 
-    // Publish queue depth (0 because we're starting the turn now).
-    this.emit({
-      _meta: { magPiAcp: { queueDepth: this.turnQueue.length, running: true } },
-      sessionUpdate: "session_info_update",
-    });
-
     // Kick off pi, but completion is determined by pi events, not the RPC response.
     // Pi may emit multiple low-level runs; the full prompt ends at `agent_settled`.
     void this.runPrompt(t);
@@ -734,12 +702,6 @@ export class MagPiAcpSession {
       }
       this.pendingTurn = null;
       this.inAgentLoop = false;
-      this.emit({
-        _meta: {
-          magPiAcp: { queueDepth: this.turnQueue.length, running: false },
-        },
-        sessionUpdate: "session_info_update",
-      });
     }
   }
 
@@ -1111,11 +1073,6 @@ export class MagPiAcpSession {
         sessionUpdate: "agent_message_chunk",
       });
       this.startTurn(next);
-    } else {
-      this.emit({
-        _meta: { magPiAcp: { queueDepth: 0, running: false } },
-        sessionUpdate: "session_info_update",
-      });
     }
   }
 
@@ -1197,7 +1154,7 @@ export class MagPiAcpSession {
           return {
             const: option,
             title: option,
-            ...(description ? { _meta: { magPiAcp: { description } } } : {}),
+            ...(description ? { description } : {}),
           };
         }),
         title: "Suggested answers",
@@ -1555,7 +1512,6 @@ SessionManagerConstructor.prototype.create = async function create(
   const session = new MagPiAcpSession({
     conn: params.conn,
     cwd: params.cwd,
-    fileCommands: params.fileCommands ?? [],
     mcpServers: params.mcpServers,
     proc,
     sessionId,
@@ -1587,7 +1543,6 @@ SessionManagerConstructor.prototype.getOrCreate = function getOrCreate(
   const session = new MagPiAcpSession({
     conn: params.conn,
     cwd: params.cwd,
-    fileCommands: params.fileCommands ?? [],
     mcpServers: params.mcpServers,
     proc: params.proc,
     sessionId,

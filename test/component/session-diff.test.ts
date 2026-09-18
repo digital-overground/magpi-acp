@@ -1,20 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
-
 import { MagPiAcpSession } from "../../src/acp/session.js";
+import type { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
 } from "../helpers/fakes.js";
 
-const { join } = path;
+type UnknownRecord = Record<string, unknown>;
+
+const asRecord = (value: unknown): UnknownRecord => {
+  assert.ok(value !== null && typeof value === "object");
+  return value as UnknownRecord;
+};
 
 const createSession = (cwd: string) => {
   const conn = new FakeAgentSideConnection();
@@ -23,59 +27,41 @@ const createSession = (cwd: string) => {
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd,
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
   return { conn, proc };
 };
 
-type ToolCallSessionUpdate = Extract<
-  SessionUpdate,
-  { sessionUpdate: "tool_call" }
->;
-type ToolCallUpdateSessionUpdate = Extract<
-  SessionUpdate,
-  { sessionUpdate: "tool_call_update" }
->;
-
 const completedToolUpdate = (
   conn: FakeAgentSideConnection,
   toolCallId = "t1"
-): ToolCallUpdateSessionUpdate | undefined => {
-  for (const { update } of conn.updates) {
-    if (
-      update.sessionUpdate === "tool_call_update" &&
+) =>
+  conn.updates.find((message) => {
+    const update = asRecord(message.update);
+    return (
       update.toolCallId === toolCallId &&
+      update.sessionUpdate === "tool_call_update" &&
       update.status === "completed"
-    ) {
-      return update;
-    }
-  }
-  return undefined;
-};
+    );
+  });
 
-const startedToolCall = (
-  conn: FakeAgentSideConnection,
-  toolCallId = "t1"
-): ToolCallSessionUpdate | undefined => {
-  for (const { update } of conn.updates) {
-    if (
-      update.sessionUpdate === "tool_call" &&
-      update.toolCallId === toolCallId
-    ) {
-      return update;
-    }
-  }
-  return undefined;
+const completedDiff = (conn: FakeAgentSideConnection): UnknownRecord => {
+  const message = completedToolUpdate(conn);
+  assert.ok(message, "expected completed tool_call_update");
+  const update = asRecord(message.update);
+  assert.ok(Array.isArray(update.content), "expected content array");
+  const diff = update.content.find((item) => asRecord(item).type === "diff");
+  assert.ok(diff, "expected diff content item");
+  return asRecord(diff);
 };
 
 test("MagPiAcpSession: emits ACP diff content for edit tool from actual before/after file contents", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "magpi-acp-diff-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
-  const filePath = join(dir, "a.txt");
+  const filePath = path.join(dir, "a.txt");
   writeFileSync(filePath, "before\n", "utf-8");
 
   const { conn, proc } = createSession(dir);
@@ -96,27 +82,24 @@ test("MagPiAcpSession: emits ACP diff content for edit tool from actual before/a
 
   await delay(0);
 
-  const end = completedToolUpdate(conn);
-  assert.ok(end, "expected completed tool_call_update");
-
-  const { content } = end;
-  assert.ok(Array.isArray(content), "expected content array");
-  const diff = content.find((item) => item.type === "diff");
-  assert.ok(diff, "expected diff content item");
+  const diff = completedDiff(conn);
   assert.equal(diff.path, "a.txt");
   assert.equal(diff.oldText, "before\n");
   assert.equal(diff.newText, "after\n");
+
+  const end = completedToolUpdate(conn);
+  assert.ok(end);
   assert.equal(
-    end.rawOutput,
+    asRecord(end.update).rawOutput,
     undefined,
     "expected raw output to be suppressed when diff is emitted"
   );
 });
 
 test("MagPiAcpSession: does not turn requested edit args into finalized ACP diffs at tool start", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "magpi-acp-diff-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
-  const filePath = join(dir, "a.txt");
+  const filePath = path.join(dir, "a.txt");
   writeFileSync(filePath, "before\n", "utf-8");
 
   const { conn, proc } = createSession(dir);
@@ -130,10 +113,13 @@ test("MagPiAcpSession: does not turn requested edit args into finalized ACP diff
 
   await delay(0);
 
-  const start = startedToolCall(conn);
+  const start = conn.updates.find((message) => {
+    const update = asRecord(message.update);
+    return update.toolCallId === "t1" && update.sessionUpdate === "tool_call";
+  });
   assert.ok(start, "expected tool_call for edit start");
   assert.equal(
-    start.content,
+    asRecord(start.update).content,
     undefined,
     "expected no start-time diff from requested edit args"
   );
@@ -148,18 +134,15 @@ test("MagPiAcpSession: does not turn requested edit args into finalized ACP diff
 
   await delay(0);
 
-  const end = completedToolUpdate(conn);
-  assert.ok(end, "expected completed tool_call_update");
-  const diff = end.content?.find((item) => item.type === "diff");
-  assert.ok(diff, "expected diff content item");
+  const diff = completedDiff(conn);
   assert.equal(diff.oldText, "before\n");
   assert.equal(diff.newText, "after\n");
 });
 
 test("MagPiAcpSession: edit diff uses realized fuzzy-match file contents instead of requested args", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "magpi-acp-diff-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
-  const filePath = join(dir, "fuzzy.txt");
+  const filePath = path.join(dir, "fuzzy.txt");
   writeFileSync(filePath, "FULLWIDTH: ＡＢＣ１２３\n", "utf-8");
 
   const { conn, proc } = createSession(dir);
@@ -196,18 +179,15 @@ test("MagPiAcpSession: edit diff uses realized fuzzy-match file contents instead
 
   await delay(0);
 
-  const end = completedToolUpdate(conn);
-  assert.ok(end, "expected completed tool_call_update");
-  const diff = end.content?.find((item) => item.type === "diff");
-  assert.ok(diff, "expected diff content item");
+  const diff = completedDiff(conn);
   assert.equal(diff.oldText, "FULLWIDTH: ＡＢＣ１２３\n");
   assert.equal(diff.newText, "FULLWIDTH: ascii replacement\n");
 });
 
 test("MagPiAcpSession: emits write diff content from actual before/after file contents on completion", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "magpi-acp-diff-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
-  const filePath = join(dir, "a.txt");
+  const filePath = path.join(dir, "a.txt");
   writeFileSync(filePath, "before\n", "utf-8");
 
   const { conn, proc } = createSession(dir);
@@ -221,10 +201,13 @@ test("MagPiAcpSession: emits write diff content from actual before/after file co
 
   await delay(0);
 
-  const start = startedToolCall(conn);
+  const start = conn.updates.find((message) => {
+    const update = asRecord(message.update);
+    return update.toolCallId === "t1" && update.sessionUpdate === "tool_call";
+  });
   assert.ok(start, "expected tool_call for write start");
   assert.equal(
-    start.content,
+    asRecord(start.update).content,
     undefined,
     "expected no start-time diff for write"
   );
@@ -241,24 +224,24 @@ test("MagPiAcpSession: emits write diff content from actual before/after file co
 
   await delay(0);
 
-  const end = completedToolUpdate(conn);
-  assert.ok(end, "expected completed tool_call_update");
-  const diff = end.content?.find((item) => item.type === "diff");
-  assert.ok(diff, "expected diff content item");
+  const diff = completedDiff(conn);
   assert.equal(diff.path, "a.txt");
   assert.equal(diff.oldText, "before\n");
   assert.equal(diff.newText, "after\n");
+
+  const end = completedToolUpdate(conn);
+  assert.ok(end);
   assert.equal(
-    end.rawOutput,
+    asRecord(end.update).rawOutput,
     undefined,
     "expected raw output to be suppressed when diff is emitted"
   );
 });
 
 test("MagPiAcpSession: emits write diff content for new files on completion", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "magpi-acp-diff-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
-  const filePath = join(dir, "new.txt");
+  const filePath = path.join(dir, "new.txt");
 
   const { conn, proc } = createSession(dir);
 
@@ -283,10 +266,7 @@ test("MagPiAcpSession: emits write diff content for new files on completion", as
 
   await delay(0);
 
-  const end = completedToolUpdate(conn);
-  assert.ok(end, "expected completed tool_call_update");
-  const diff = end.content?.find((item) => item.type === "diff");
-  assert.ok(diff, "expected diff content item");
+  const diff = completedDiff(conn);
   assert.equal(diff.path, "new.txt");
   assert.equal(diff.oldText, null);
   assert.equal(diff.newText, "created\n");

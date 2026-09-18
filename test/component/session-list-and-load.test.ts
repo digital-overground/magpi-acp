@@ -1,17 +1,26 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { MagPiAcpAgent } from "../../src/acp/agent.js";
 import { activeSessionMessages } from "../../src/acp/pi-session-tree.js";
-// We mock PiRpcProcess.spawn so loadSession doesn't actually spawn `pi`.
 import { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
 
+type UnknownRecord = Record<string, unknown>;
+
+const asRecord = (value: unknown): UnknownRecord => {
+  assert.ok(value !== null && typeof value === "object");
+  return value as UnknownRecord;
+};
+
+const processClass = PiRpcProcess as unknown as {
+  spawn: typeof PiRpcProcess.spawn;
+};
+
 test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays history", async () => {
-  // Create a fake PI_CODING_AGENT_DIR with one session.
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-test-"));
   const sessionsDir = path.join(root, "sessions", "--tmp--project--");
   const sessionFile = path.join(
@@ -19,7 +28,6 @@ test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     "0000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jsonl"
   );
 
-  // Ensure parent dirs.
   mkdirSync(sessionsDir, { recursive: true });
 
   writeFileSync(
@@ -91,83 +99,67 @@ test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     const conn = new FakeAgentSideConnection();
     const agent = new MagPiAcpAgent(asAgentConn(conn));
 
-    // 1) list sessions
-    const listed = await agent.listSessions({
-      _meta: null,
-      cursor: null,
-      cwd: null,
-    } as never);
+    const listed = await agent.listSessions({ cursor: null, cwd: null });
     assert.ok(listed.sessions.length >= 1);
 
-    const s = listed.sessions.find((x) => x.sessionId === "sess-1");
-    assert.ok(s);
-    assert.equal(s?.cwd, "/tmp/project");
-    assert.equal(s?.title, "My Named Session");
+    const session = listed.sessions.find((item) => item.sessionId === "sess-1");
+    assert.ok(session);
+    assert.equal(session.cwd, "/tmp/project");
+    assert.equal(session.title, "My Named Session");
 
-    // 2) load session: mock spawn to return fake proc with compacted history
     const originalSpawn = PiRpcProcess.spawn;
 
-    (PiRpcProcess as unknown as { spawn: unknown }).spawn = (params: {
-      sessionPath?: string;
-    }) => {
-      // ensure loadSession resolves to some jsonl that ends with our expected filename
-      assert.ok(typeof params.sessionPath === "string");
+    processClass.spawn = (params) => {
+      assert.equal(typeof params.sessionPath, "string");
       assert.ok(
-        params.sessionPath.endsWith(
+        params.sessionPath?.endsWith(
           "/0000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jsonl"
         )
       );
 
-      return {
-        getAvailableModels: () => ({ models: [] }),
-        getMessages: () => ({
-          messages: [{ content: "Only the compacted context", role: "user" }],
-        }),
-        getState: () => ({ thinkingLevel: "medium" }),
-        onEvent: () => () => {
-          // noop unsubscribe
-        },
-      } as never;
+      return Promise.resolve({
+        getAvailableModels: () => Promise.resolve({ models: [] }),
+        getMessages: () =>
+          Promise.resolve({
+            messages: [{ content: "Only the compacted context", role: "user" }],
+          }),
+        getState: () => Promise.resolve({ thinkingLevel: "medium" }),
+        onEvent: () => () => {},
+      } as unknown as PiRpcProcess);
     };
 
     try {
       await agent.loadSession({
-        _meta: null,
         cwd: "/tmp/project",
         mcpServers: [],
         sessionId: "sess-1",
-      } as never);
+      });
 
-      // loadSession should have replayed messages as session/update notifications.
-      const texts = conn.updates
-        .map(
-          (entry) =>
-            entry.update as {
-              content?: { text?: string };
-              messageId?: string;
-              sessionUpdate?: string;
-            }
-        )
-        .map((update) => ({
+      const texts = conn.updates.map((message) => {
+        const update = asRecord(message.update);
+        const content =
+          update.content === undefined ? undefined : asRecord(update.content);
+        return {
           kind: update.sessionUpdate,
           messageId: update.messageId,
-          text: update.content?.text,
-        }));
+          text: content?.text,
+        };
+      });
 
       assert.ok(
         texts.some(
-          (t) =>
-            t.kind === "user_message_chunk" &&
-            t.messageId === undefined &&
-            t.text === "Hello"
+          (item) =>
+            item.kind === "user_message_chunk" &&
+            item.messageId === undefined &&
+            item.text === "Hello"
         )
       );
       assert.ok(
         texts.some(
-          (t) =>
-            t.kind === "agent_message_chunk" &&
-            t.messageId === undefined &&
-            t.text === "Hi there!"
+          (item) =>
+            item.kind === "agent_message_chunk" &&
+            item.messageId === undefined &&
+            item.text === "Hi there!"
         )
       );
       assert.deepEqual(
@@ -185,7 +177,7 @@ test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
         }
       );
     } finally {
-      PiRpcProcess.spawn = originalSpawn;
+      processClass.spawn = originalSpawn;
     }
   } finally {
     if (oldEnv === undefined) {

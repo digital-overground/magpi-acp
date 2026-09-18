@@ -5,41 +5,50 @@ import path from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { SessionUpdate } from "@agentclientprotocol/sdk";
-
 import { MagPiAcpSession } from "../../src/acp/session.js";
+import type { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
 } from "../helpers/fakes.js";
 
-const { join } = path;
+type UnknownRecord = Record<string, unknown>;
 
-type SessionUpdateKind = SessionUpdate["sessionUpdate"];
+const asRecord = (value: unknown): UnknownRecord => {
+  assert.ok(value !== null && typeof value === "object");
+  return value as UnknownRecord;
+};
 
-const updateAt = <Kind extends SessionUpdateKind>(
+const updateAt = (
   conn: FakeAgentSideConnection,
+  index: number
+): UnknownRecord => asRecord(conn.updates.at(index)?.update);
+
+const requestAt = (requests: unknown[], index: number): UnknownRecord =>
+  asRecord(requests.at(index));
+
+const requestPropertyAt = (
+  requests: unknown[],
   index: number,
-  kind: Kind
-): Extract<SessionUpdate, { sessionUpdate: Kind }> => {
-  const message = conn.updates[index];
-  assert.ok(message, `expected session update at index ${index}`);
-  assert.equal(message.update.sessionUpdate, kind);
-  return message.update as Extract<SessionUpdate, { sessionUpdate: Kind }>;
+  property: string
+): unknown => {
+  const schema = asRecord(requestAt(requests, index).requestedSchema);
+  return asRecord(schema.properties)[property];
 };
 
-const messageAt = (conn: FakeAgentSideConnection, index: number) => {
-  const message = conn.updates[index];
-  assert.ok(message, `expected session update at index ${index}`);
-  return message;
-};
+const updateContentAt = (
+  conn: FakeAgentSideConnection,
+  index: number
+): UnknownRecord => asRecord(updateAt(conn, index).content);
 
-interface ElicitationRequest {
-  requestedSchema: {
-    properties: Record<string, unknown>;
-  };
-}
+const updateTextAt = (conn: FakeAgentSideConnection, index: number): string => {
+  const { text } = updateContentAt(conn, index);
+  if (typeof text !== "string") {
+    throw new TypeError("Expected text update content");
+  }
+  return text;
+};
 
 test("MagPiAcpSession: emits agent_message_chunk for text_delta", async () => {
   const conn = new FakeAgentSideConnection();
@@ -48,9 +57,8 @@ test("MagPiAcpSession: emits agent_message_chunk for text_delta", async () => {
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -66,9 +74,8 @@ test("MagPiAcpSession: emits agent_message_chunk for text_delta", async () => {
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  const message = messageAt(conn, 0);
-  assert.equal(message.sessionId, "s1");
-  assert.deepEqual(message.update, {
+  assert.equal(conn.updates[0]?.sessionId, "s1");
+  assert.deepEqual(conn.updates[0]?.update, {
     content: { text: "hi", type: "text" },
     sessionUpdate: "agent_message_chunk",
   });
@@ -81,9 +88,8 @@ test("MagPiAcpSession: emits agent_thought_chunk for thinking_delta", async () =
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -95,9 +101,8 @@ test("MagPiAcpSession: emits agent_thought_chunk for thinking_delta", async () =
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  const message = messageAt(conn, 0);
-  assert.equal(message.sessionId, "s1");
-  assert.deepEqual(message.update, {
+  assert.equal(conn.updates[0]?.sessionId, "s1");
+  assert.deepEqual(conn.updates[0]?.update, {
     content: { text: "thinking...", type: "text" },
     sessionUpdate: "agent_thought_chunk",
   });
@@ -110,9 +115,8 @@ test("MagPiAcpSession: emits tool_call + tool_call_update + completes", async ()
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -138,36 +142,38 @@ test("MagPiAcpSession: emits tool_call + tool_call_update + completes", async ()
 
   assert.equal(conn.updates.length, 3);
 
-  const start = updateAt(conn, 0, "tool_call");
-  assert.equal(start.toolCallId, "t1");
-  assert.equal(start.title, "ls");
-  assert.equal(start.kind, "execute");
-  assert.equal(start.status, "in_progress");
-  assert.equal(start.locations, undefined);
-  assert.deepEqual(start.content, [{ terminalId: "t1", type: "terminal" }]);
-  assert.deepEqual(start._meta, {
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "tool_call");
+  assert.equal(updateAt(conn, 0).toolCallId, "t1");
+  assert.equal(updateAt(conn, 0).title, "ls");
+  assert.equal(updateAt(conn, 0).kind, "execute");
+  assert.equal(updateAt(conn, 0).status, "in_progress");
+  assert.equal(updateAt(conn, 0).locations, undefined);
+  assert.deepEqual(updateAt(conn, 0).content, [
+    { terminalId: "t1", type: "terminal" },
+  ]);
+  assert.deepEqual(updateAt(conn, 0)._meta, {
     terminal_info: { cwd: process.cwd(), terminal_id: "t1" },
   });
-  assert.equal(start.rawInput, undefined);
+  assert.equal(updateAt(conn, 0).rawInput, undefined);
 
-  const progress = updateAt(conn, 1, "tool_call_update");
-  assert.equal(progress.toolCallId, "t1");
-  assert.equal(progress.status, "in_progress");
-  assert.equal(progress.content, undefined);
-  assert.deepEqual(progress._meta, {
+  assert.equal(conn.updates[1]?.update.sessionUpdate, "tool_call_update");
+  assert.equal(updateAt(conn, 1).toolCallId, "t1");
+  assert.equal(updateAt(conn, 1).status, "in_progress");
+  assert.equal(updateAt(conn, 1).content, undefined);
+  assert.deepEqual(updateAt(conn, 1)._meta, {
     terminal_output: { data: "running", terminal_id: "t1" },
   });
-  assert.equal(progress.rawOutput, undefined);
+  assert.equal(updateAt(conn, 1).rawOutput, undefined);
 
-  const end = updateAt(conn, 2, "tool_call_update");
-  assert.equal(end.toolCallId, "t1");
-  assert.equal(end.status, "completed");
-  assert.equal(end.content, undefined);
-  assert.deepEqual(end._meta, {
+  assert.equal(conn.updates[2]?.update.sessionUpdate, "tool_call_update");
+  assert.equal(updateAt(conn, 2).toolCallId, "t1");
+  assert.equal(updateAt(conn, 2).status, "completed");
+  assert.equal(updateAt(conn, 2).content, undefined);
+  assert.deepEqual(updateAt(conn, 2)._meta, {
     terminal_exit: { exit_code: 0, signal: null, terminal_id: "t1" },
     terminal_output: { data: "done", terminal_id: "t1" },
   });
-  assert.equal(end.rawOutput, undefined);
+  assert.equal(updateAt(conn, 2).rawOutput, undefined);
 });
 
 test("MagPiAcpSession: emits tool locations from pi path args", async () => {
@@ -177,9 +183,8 @@ test("MagPiAcpSession: emits tool locations from pi path args", async () => {
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -193,8 +198,8 @@ test("MagPiAcpSession: emits tool locations from pi path args", async () => {
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  const update = updateAt(conn, 0, "tool_call");
-  assert.deepEqual(update.locations, [
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "tool_call");
+  assert.deepEqual(updateAt(conn, 0).locations, [
     { path: `${process.cwd()}/src/acp/session.ts` },
   ]);
 });
@@ -209,9 +214,8 @@ test("MagPiAcpSession: handles extension select via ACP permission request", asy
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -257,9 +261,8 @@ test("MagPiAcpSession: handles extension confirm via ACP permission request", as
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -274,10 +277,7 @@ test("MagPiAcpSession: handles extension confirm via ACP permission request", as
   await delay(0);
 
   assert.equal(conn.permissionRequests.length, 1);
-  const permissionRequest = conn.permissionRequests[0] as {
-    options: unknown;
-  };
-  assert.deepEqual(permissionRequest.options, [
+  assert.deepEqual(requestAt(conn.permissionRequests, 0).options, [
     { kind: "allow_once", name: "Yes", optionId: "yes" },
     { kind: "reject_once", name: "No", optionId: "no" },
   ]);
@@ -294,9 +294,8 @@ test("MagPiAcpSession: sends cancelled response when ACP confirm is cancelled", 
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -325,9 +324,8 @@ test("MagPiAcpSession: combines an extension selection with custom context", asy
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -365,13 +363,13 @@ test("MagPiAcpSession: combines an extension selection with custom context", asy
           choice: {
             oneOf: [
               {
-                _meta: { magPiAcp: { description: "The first option" } },
                 const: "Alpha",
+                description: "The first option",
                 title: "Alpha",
               },
               {
-                _meta: { magPiAcp: { description: "The second option" } },
                 const: "Beta",
+                description: "The second option",
                 title: "Beta",
               },
             ],
@@ -407,9 +405,8 @@ test("MagPiAcpSession: turns an extension-provided free-form choice into a text 
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -424,10 +421,7 @@ test("MagPiAcpSession: turns an extension-provided free-form choice into a text 
 
   await delay(0);
 
-  const elicitationRequest = conn.elicitationRequests[0] as {
-    requestedSchema: unknown;
-  };
-  assert.deepEqual(elicitationRequest.requestedSchema, {
+  assert.deepEqual(requestAt(conn.elicitationRequests, 0).requestedSchema, {
     properties: {
       choice: {
         oneOf: [{ const: "Alpha", title: "Alpha" }],
@@ -459,9 +453,8 @@ test("MagPiAcpSession: handles extension confirm with ACP elicitation", async ()
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -477,8 +470,7 @@ test("MagPiAcpSession: handles extension confirm with ACP elicitation", async ()
   await delay(0);
 
   assert.equal(conn.elicitationRequests.length, 1);
-  const elicitationRequest = conn.elicitationRequests[0] as ElicitationRequest;
-  assert.deepEqual(elicitationRequest.requestedSchema.properties.choice, {
+  assert.deepEqual(requestPropertyAt(conn.elicitationRequests, 0, "choice"), {
     oneOf: [
       { const: "yes", title: "Yes" },
       { const: "no", title: "No" },
@@ -498,9 +490,8 @@ test("MagPiAcpSession: handles input and editor with ACP elicitation", async () 
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -531,14 +522,12 @@ test("MagPiAcpSession: handles input and editor with ACP elicitation", async () 
   });
   await delay(0);
 
-  const inputRequest = conn.elicitationRequests[0] as ElicitationRequest;
-  assert.deepEqual(inputRequest.requestedSchema.properties.answer, {
+  assert.deepEqual(requestPropertyAt(conn.elicitationRequests, 0, "answer"), {
     description: "Your name",
     title: "Answer",
     type: "string",
   });
-  const editorRequest = conn.elicitationRequests[1] as ElicitationRequest;
-  assert.deepEqual(editorRequest.requestedSchema.properties.answer, {
+  assert.deepEqual(requestPropertyAt(conn.elicitationRequests, 1, "answer"), {
     default: "Original text",
     title: "Answer",
     type: "string",
@@ -560,9 +549,8 @@ test("MagPiAcpSession: cancels extension UI request when ACP elicitation is not 
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -587,9 +575,8 @@ test("MagPiAcpSession: cancels unsupported input and editor extension UI request
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -613,22 +600,8 @@ test("MagPiAcpSession: cancels unsupported input and editor extension UI request
     { cancelled: true, id: "ui-4" },
   ]);
   assert.equal(conn.updates.length, 2);
-  const inputFallback = updateAt(conn, 0, "agent_message_chunk");
-  assert.equal(inputFallback.content.type, "text");
-  if (inputFallback.content.type === "text") {
-    assert.match(
-      inputFallback.content.text,
-      /input UI request is not supported/u
-    );
-  }
-  const editorFallback = updateAt(conn, 1, "agent_message_chunk");
-  assert.equal(editorFallback.content.type, "text");
-  if (editorFallback.content.type === "text") {
-    assert.match(
-      editorFallback.content.text,
-      /editor UI request is not supported/u
-    );
-  }
+  assert.match(updateTextAt(conn, 0), /input UI request is not supported/u);
+  assert.match(updateTextAt(conn, 1), /editor UI request is not supported/u);
 });
 
 test("MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attempt/maxAttempts and rounded delay", async () => {
@@ -638,9 +611,8 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attem
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -654,7 +626,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attem
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(messageAt(conn, 0).update, {
+  assert.deepEqual(conn.updates[0]?.update, {
     content: { text: "Retrying (attempt 2/5, waiting 2s)...", type: "text" },
     sessionUpdate: "agent_message_chunk",
   });
@@ -667,9 +639,8 @@ test("MagPiAcpSession: formats a positive sub-second auto_retry_start delay as w
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -683,7 +654,7 @@ test("MagPiAcpSession: formats a positive sub-second auto_retry_start delay as w
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(messageAt(conn, 0).update, {
+  assert.deepEqual(conn.updates[0]?.update, {
     content: { text: "Retrying (attempt 1/3, waiting 1s)...", type: "text" },
     sessionUpdate: "agent_message_chunk",
   });
@@ -696,9 +667,8 @@ test("MagPiAcpSession: falls back to a generic retry message when auto_retry_sta
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -707,12 +677,12 @@ test("MagPiAcpSession: falls back to a generic retry message when auto_retry_sta
     delayMs: "bad",
     maxAttempts: null,
     type: "auto_retry_start",
-  } as never);
+  });
 
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(messageAt(conn, 0).update, {
+  assert.deepEqual(conn.updates[0]?.update, {
     content: { text: "Retrying...", type: "text" },
     sessionUpdate: "agent_message_chunk",
   });
@@ -725,9 +695,8 @@ test("MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_s
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -737,17 +706,14 @@ test("MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_s
     errorMessage: "provider overloaded: 529",
     maxAttempts: 4,
     type: "auto_retry_start",
-  } as never);
+  });
 
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  const update = updateAt(conn, 0, "agent_message_chunk");
-  assert.equal(update.content.type, "text");
-  if (update.content.type === "text") {
-    assert.equal(update.content.text, "Retrying (attempt 1/4, waiting 2s)...");
-    assert.equal(update.content.text.includes("provider overloaded"), false);
-  }
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "agent_message_chunk");
+  assert.equal(updateTextAt(conn, 0), "Retrying (attempt 1/4, waiting 2s)...");
+  assert.equal(updateTextAt(conn, 0).includes("provider overloaded"), false);
 });
 
 test("MagPiAcpSession: emits agent_message_chunk for auto_retry_end", async () => {
@@ -757,18 +723,17 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_retry_end", async () =
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
-  proc.emit({ type: "auto_retry_end" } as never);
+  proc.emit({ type: "auto_retry_end" });
 
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(messageAt(conn, 0).update, {
+  assert.deepEqual(conn.updates[0]?.update, {
     content: { text: "Retry finished, resuming.", type: "text" },
     sessionUpdate: "agent_message_chunk",
   });
@@ -781,18 +746,17 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_start", asy
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
-  proc.emit({ type: "auto_compaction_start" } as never);
+  proc.emit({ type: "auto_compaction_start" });
 
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(messageAt(conn, 0).update, {
+  assert.deepEqual(conn.updates[0]?.update, {
     content: {
       text: "Context nearing limit, running automatic compaction...",
       type: "text",
@@ -808,18 +772,17 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_end", async
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
-  proc.emit({ type: "auto_compaction_end" } as never);
+  proc.emit({ type: "auto_compaction_end" });
 
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(messageAt(conn, 0).update, {
+  assert.deepEqual(conn.updates[0]?.update, {
     content: {
       text: "Automatic compaction finished; context was summarized to continue the session.",
       type: "text",
@@ -835,9 +798,8 @@ test("MagPiAcpSession: preserves ordering when auto_retry_start is interleaved w
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -850,7 +812,7 @@ test("MagPiAcpSession: preserves ordering when auto_retry_start is interleaved w
     delayMs: 2000,
     maxAttempts: 2,
     type: "auto_retry_start",
-  } as never);
+  });
   proc.emit({
     assistantMessageEvent: { delta: "after", type: "text_delta" },
     type: "message_update",
@@ -887,9 +849,8 @@ test("MagPiAcpSession: defers tool locations until execution starts with complet
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -927,18 +888,19 @@ test("MagPiAcpSession: defers tool locations until execution starts with complet
   await delay(0);
 
   assert.equal(conn.updates.length, 3);
-  assert.equal(updateAt(conn, 0, "tool_call").locations, undefined);
-  assert.equal(updateAt(conn, 1, "tool_call_update").locations, undefined);
-  assert.deepEqual(updateAt(conn, 2, "tool_call_update").locations, [
-    { path: "/tmp/test.txt" },
-  ]);
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "tool_call");
+  assert.equal(updateAt(conn, 0).locations, undefined);
+  assert.equal(conn.updates[1]?.update.sessionUpdate, "tool_call_update");
+  assert.equal(updateAt(conn, 1).locations, undefined);
+  assert.equal(conn.updates[2]?.update.sessionUpdate, "tool_call_update");
+  assert.deepEqual(updateAt(conn, 2).locations, [{ path: "/tmp/test.txt" }]);
 });
 
 test("MagPiAcpSession: emits edit tool line when oldText matches uniquely", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
-  const cwd = mkdtempSync(join(tmpdir(), "magpi-acp-lines-"));
-  const filePath = join(cwd, "a.txt");
+  const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-"));
+  const filePath = path.join(cwd, "a.txt");
 
   mkdirSync(cwd, { recursive: true });
   writeFileSync(filePath, "one\ntwo\nneedle\nthree\n", "utf-8");
@@ -946,9 +908,8 @@ test("MagPiAcpSession: emits edit tool line when oldText matches uniquely", asyn
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd,
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -962,16 +923,15 @@ test("MagPiAcpSession: emits edit tool line when oldText matches uniquely", asyn
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(updateAt(conn, 0, "tool_call").locations, [
-    { line: 3, path: filePath },
-  ]);
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "tool_call");
+  assert.deepEqual(updateAt(conn, 0).locations, [{ line: 3, path: filePath }]);
 });
 
 test("MagPiAcpSession: emits edit tool line from edits array when oldText matches uniquely", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
-  const cwd = mkdtempSync(join(tmpdir(), "magpi-acp-lines-edits-"));
-  const filePath = join(cwd, "a.txt");
+  const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-edits-"));
+  const filePath = path.join(cwd, "a.txt");
 
   mkdirSync(cwd, { recursive: true });
   writeFileSync(filePath, "one\ntwo\nneedle\nthree\n", "utf-8");
@@ -979,9 +939,8 @@ test("MagPiAcpSession: emits edit tool line from edits array when oldText matche
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd,
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -998,16 +957,15 @@ test("MagPiAcpSession: emits edit tool line from edits array when oldText matche
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(updateAt(conn, 0, "tool_call").locations, [
-    { line: 3, path: filePath },
-  ]);
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "tool_call");
+  assert.deepEqual(updateAt(conn, 0).locations, [{ line: 3, path: filePath }]);
 });
 
 test("MagPiAcpSession: emits edit tool line from stringified edits array", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
-  const cwd = mkdtempSync(join(tmpdir(), "magpi-acp-lines-edits-string-"));
-  const filePath = join(cwd, "a.txt");
+  const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-edits-string-"));
+  const filePath = path.join(cwd, "a.txt");
 
   mkdirSync(cwd, { recursive: true });
   writeFileSync(filePath, "one\ntwo\nneedle\nthree\n", "utf-8");
@@ -1015,9 +973,8 @@ test("MagPiAcpSession: emits edit tool line from stringified edits array", async
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd,
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1034,16 +991,15 @@ test("MagPiAcpSession: emits edit tool line from stringified edits array", async
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(updateAt(conn, 0, "tool_call").locations, [
-    { line: 3, path: filePath },
-  ]);
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "tool_call");
+  assert.deepEqual(updateAt(conn, 0).locations, [{ line: 3, path: filePath }]);
 });
 
 test("MagPiAcpSession: omits edit tool line when oldText matches multiple times", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
-  const cwd = mkdtempSync(join(tmpdir(), "magpi-acp-lines-dup-"));
-  const filePath = join(cwd, "a.txt");
+  const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-dup-"));
+  const filePath = path.join(cwd, "a.txt");
 
   mkdirSync(cwd, { recursive: true });
   writeFileSync(filePath, "one\nneedle\ntwo\nneedle\n", "utf-8");
@@ -1051,9 +1007,8 @@ test("MagPiAcpSession: omits edit tool line when oldText matches multiple times"
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd,
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1067,9 +1022,8 @@ test("MagPiAcpSession: omits edit tool line when oldText matches multiple times"
   await delay(0);
 
   assert.equal(conn.updates.length, 1);
-  assert.deepEqual(updateAt(conn, 0, "tool_call").locations, [
-    { path: filePath },
-  ]);
+  assert.equal(conn.updates[0]?.update.sessionUpdate, "tool_call");
+  assert.deepEqual(updateAt(conn, 0).locations, [{ path: filePath }]);
 });
 
 test("MagPiAcpSession: emits an ACP plan from todo extension results", async () => {
@@ -1079,9 +1033,8 @@ test("MagPiAcpSession: emits an ACP plan from todo extension results", async () 
   void new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1131,9 +1084,8 @@ test("MagPiAcpSession: prompt remains pending through multiple agent_end events 
   const session = new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1168,9 +1120,8 @@ test("MagPiAcpSession: emits ACP context usage and cost after a turn", async () 
   const session = new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1198,9 +1149,8 @@ test("MagPiAcpSession: does not re-emit startup info on first prompt after it wa
   const session = new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1218,8 +1168,8 @@ test("MagPiAcpSession: does not re-emit startup info on first prompt after it wa
   const startupUpdates = conn.updates.filter(
     (entry) =>
       entry.update.sessionUpdate === "agent_message_chunk" &&
-      entry.update.content.type === "text" &&
-      entry.update.content.text === notice
+      asRecord(asRecord(entry.update).content).type === "text" &&
+      asRecord(asRecord(entry.update).content).text === notice
   );
   assert.equal(startupUpdates.length, 1);
 
@@ -1239,9 +1189,8 @@ test("MagPiAcpSession: cancel flips stopReason to cancelled", async () => {
   const session = new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1264,9 +1213,8 @@ test("MagPiAcpSession: queues concurrent prompt and starts it after agent_settle
   const session = new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1305,9 +1253,8 @@ test("MagPiAcpSession: cancel clears queued prompts", async () => {
   const session = new MagPiAcpSession({
     conn: asAgentConn(conn),
     cwd: process.cwd(),
-    fileCommands: [],
     mcpServers: [],
-    proc: proc as never,
+    proc: proc as unknown as PiRpcProcess,
     sessionId: "s1",
   });
 
@@ -1327,37 +1274,4 @@ test("MagPiAcpSession: cancel clears queued prompts", async () => {
 
   assert.equal(r1, "cancelled");
   assert.equal(r2, "cancelled");
-});
-
-test("MagPiAcpSession: expands /command before sending to pi", async () => {
-  const conn = new FakeAgentSideConnection();
-  const proc = new FakePiRpcProcess();
-
-  const session = new MagPiAcpSession({
-    conn: asAgentConn(conn),
-    cwd: process.cwd(),
-    fileCommands: [
-      {
-        content: "Say hello to $1",
-        description: "test",
-        name: "hello",
-        source: "(project)",
-      },
-    ],
-    mcpServers: [],
-    proc: proc as never,
-    sessionId: "s1",
-  });
-
-  const p = session.prompt("/hello world");
-  assert.equal(proc.prompts.length, 1);
-  assert.equal(proc.prompts[0]?.message, "Say hello to world");
-
-  proc.emit({ type: "agent_start" });
-  proc.emit({ type: "turn_end" });
-  proc.emit({ type: "agent_end" });
-  proc.emit({ type: "agent_settled" });
-
-  const reason = await p;
-  assert.equal(reason, "end_turn");
 });

@@ -22,8 +22,8 @@ p.stdout.on("data", (d) => {
     if (msg.id === 2) {
       sid = msg.result?.sessionId;
       console.log(
-        "session/new response _meta.magPiAcp.startupInfo present:",
-        Boolean(msg.result?._meta?.magPiAcp?.startupInfo)
+        "session/new response uses standard fields only:",
+        !("_meta" in msg.result)
       );
     }
 
@@ -34,11 +34,7 @@ p.stdout.on("data", (d) => {
         up?.content?.type === "text"
       ) {
         const t = String(up.content.text);
-        if (
-          t.includes("[Context]") &&
-          t.includes("[Skills]") &&
-          t.includes("[Extensions]")
-        ) {
+        if (t.startsWith("MagPi v") && /\npi v/u.test(t)) {
           gotIntro = true;
           console.log("OK: got intro via session/update (before any prompt)");
           p.kill("SIGTERM");

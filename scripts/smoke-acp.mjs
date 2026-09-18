@@ -25,7 +25,21 @@ const send = (obj) => {
   child.stdin.write(`${JSON.stringify(obj)}\n`);
 };
 
-// Basic metadata-free ACP handshake, prompt, fork, and load.
+// Standard ACP handshake, prompt, fork, and load. Simulate a generic client by
+// stripping every private metadata field before processing agent messages.
+const withoutMeta = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(withoutMeta);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "_meta")
+      .map(([key, item]) => [key, withoutMeta(item)])
+  );
+};
 send({
   id: 1,
   jsonrpc: "2.0",
@@ -53,7 +67,7 @@ child.stdout.on("data", (chunk) => {
     }
     let msg;
     try {
-      msg = JSON.parse(line);
+      msg = withoutMeta(JSON.parse(line));
     } catch {
       continue;
     }
