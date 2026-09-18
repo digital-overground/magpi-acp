@@ -4,7 +4,6 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MagPiAcpAgent } from '../../src/acp/agent.js'
-import { SessionStore } from '../../src/acp/session-store.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 
 class FakeSessions {
@@ -25,7 +24,6 @@ test('MagPiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth er
   const conn = new FakeAgentSideConnection()
   const root = mkdtempSync(join(tmpdir(), 'magpi-acp-runtime-auth-'))
   const sessionFile = join(root, 'sessions', 'failed.jsonl')
-  const sessionMapPath = join(root, 'session-map.json')
 
   mkdirSync(join(root, 'sessions'), { recursive: true })
   writeFileSync(
@@ -54,11 +52,8 @@ test('MagPiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth er
   }
 
   const sessions = new FakeSessions(session)
-  const store = new SessionStore(sessionMapPath)
-  store.upsert({ sessionId: 's-auth', cwd: process.cwd(), sessionFile })
   const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
   ;(agent as any).sessions = sessions as any
-  ;(agent as any).store = store as any
 
   await assert.rejects(
     () => agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any),
@@ -67,7 +62,6 @@ test('MagPiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth er
 
   assert.deepEqual(sessions.closeCalls, ['s-auth'])
   assert.equal(existsSync(sessionFile), false)
-  assert.equal(store.get('s-auth'), null)
 })
 
 test('MagPiAcpAgent: newSession returns Internal error on non-auth model probe failures after spawn', async () => {

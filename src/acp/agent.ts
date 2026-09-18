@@ -25,7 +25,6 @@ import {
 } from '@agentclientprotocol/sdk'
 import { getAuthMethods } from './auth.js'
 import { SessionManager, toToolCallLocations, type MagPiAcpSession } from './session.js'
-import { SessionStore } from './session-store.js'
 import { PiRpcProcess, type PiSessionEntry, type PiSessionTreeNode } from '../pi-rpc/process.js'
 import {
   MAGPI_ACP_FORK_ENTRY_ID_META,
@@ -146,7 +145,6 @@ const pkg = readNearestPackageJson(import.meta.url)
 export class MagPiAcpAgent implements ACPAgent {
   private readonly conn: AgentSideConnection
   private readonly sessions = new SessionManager()
-  private readonly store = new SessionStore()
   private readonly restoringSessions = new Map<string, Promise<MagPiAcpSession>>()
   private readonly autoTitlingSessions = new Set<string>()
   private generateTitle = generateThreadTitle
@@ -170,43 +168,20 @@ export class MagPiAcpAgent implements ACPAgent {
     const sessionFile =
       typeof state?.sessionFile === 'string' && state.sessionFile.trim()
         ? state.sessionFile
-        : this.store.get(sessionId)?.sessionFile
+        : findPiSession(sessionId)?.sessionFile
 
-    if (typeof sessionFile === 'string' && sessionFile.trim()) {
+    if (sessionFile) {
       try {
         if (existsSync(sessionFile)) unlinkSync(sessionFile)
       } catch {
         // ignore cleanup failures; the auth/internal error is the primary result
       }
     }
-
-    this.store.delete(sessionId)
-  }
-
-  private findStoredSession(sessionId: string): { cwd: string; sessionFile: string } | null {
-    const stored = this.store.get(sessionId)
-    if (stored?.cwd && stored?.sessionFile) {
-      return { cwd: stored.cwd, sessionFile: stored.sessionFile }
-    }
-
-    const piSession = findPiSession(sessionId)
-    if (!piSession) return null
-
-    this.store.upsert({
-      sessionId,
-      cwd: piSession.cwd,
-      sessionFile: piSession.sessionFile
-    })
-
-    return {
-      cwd: piSession.cwd,
-      sessionFile: piSession.sessionFile
-    }
   }
 
   private async restoreSession(
     sessionId: string,
-    opts?: { cwd?: string; mcpServers?: LoadSessionRequest['mcpServers'] }
+    opts?: { mcpServers?: LoadSessionRequest['mcpServers'] }
   ): Promise<MagPiAcpSession> {
     const existing = this.sessions.maybeGet(sessionId)
     if (existing) return existing
@@ -215,12 +190,12 @@ export class MagPiAcpAgent implements ACPAgent {
     if (inFlight) return inFlight
 
     const restorePromise = (async () => {
-      const stored = this.findStoredSession(sessionId)
+      const stored = findPiSession(sessionId)
       if (!stored) {
         throw RequestError.invalidParams(`Unknown sessionId: ${sessionId}`)
       }
 
-      const cwd = opts?.cwd ?? stored.cwd
+      const cwd = stored.cwd
 
       let proc: PiRpcProcess
       try {
@@ -247,8 +222,6 @@ export class MagPiAcpAgent implements ACPAgent {
       })
 
       this.lastSessionCwd = cwd
-      this.store.upsert({ sessionId, cwd, sessionFile: stored.sessionFile })
-
       return session
     })()
 
@@ -1062,31 +1035,23 @@ export class MagPiAcpAgent implements ACPAgent {
     // (Some clients may call session/load when restoring from history.)
     this.sessions.close(params.sessionId)
 
-    this.lastSessionCwd = params.cwd
-
-    const stored = this.findStoredSession(params.sessionId)
+    const stored = findPiSession(params.sessionId)
     if (!stored) {
       throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`)
     }
 
-    const enableSkillCommands = getEnableSkillCommands(params.cwd)
+    this.lastSessionCwd = stored.cwd
+
+    const enableSkillCommands = getEnableSkillCommands(stored.cwd)
     const session = await this.restoreSession(params.sessionId, {
-      cwd: params.cwd,
       mcpServers: params.mcpServers
     })
     const proc = session.proc
-    const fileCommands = loadSlashCommands(params.cwd)
+    const fileCommands = loadSlashCommands(stored.cwd)
 
     // Keep only one live Pi subprocess within an ACP connection.
     // (Tests sometimes stub out `this.sessions`, so guard the call.)
     ;(this.sessions as any).closeAllExcept?.(session.sessionId)
-
-    // (Optional) ensure mapping stays fresh.
-    this.store.upsert({
-      sessionId: params.sessionId,
-      cwd: params.cwd,
-      sessionFile: stored.sessionFile
-    })
 
     // Replay the full active branch; Pi's RPC context omits messages removed by compaction.
     const activeMessages = activeSessionMessages(stored.sessionFile)
@@ -1155,7 +1120,7 @@ export class MagPiAcpAgent implements ACPAgent {
               kind: 'execute',
               status: 'completed',
               content: bashTerminalContent(toolCallId),
-              _meta: bashTerminalInfoMeta(toolCallId, params.cwd)
+              _meta: bashTerminalInfoMeta(toolCallId, session.cwd)
             }
           })
 
@@ -1175,7 +1140,7 @@ export class MagPiAcpAgent implements ACPAgent {
         }
 
         // Create a synthetic ACP tool call to render historic tool usage.
-        const locations = toToolCallLocations(rawInput, params.cwd)
+        const locations = toToolCallLocations(rawInput, session.cwd)
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,
           update: {

@@ -24,11 +24,22 @@ class FakeSessions {
   }
 }
 
-test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', async () => {
+test('MagPiAcpAgent: prompt restores a missing live session through Pi discovery', async () => {
   const conn = new FakeAgentSideConnection()
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-prompt-restore-'))
+  const sessionsDir = join(root, 'sessions', '--tmp--store-project--')
+  const sessionFile = join(sessionsDir, '0000_discovered.jsonl')
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR
   const promptCalls: unknown[][] = []
   const spawnCalls: any[] = []
-  const storeUpserts: any[] = []
+
+  mkdirSync(sessionsDir, { recursive: true })
+  writeFileSync(
+    sessionFile,
+    JSON.stringify({ type: 'session', id: 'discovered-session', cwd: '/tmp/store-project' }) + '\n',
+    'utf8'
+  )
+  process.env.PI_CODING_AGENT_DIR = root
 
   const sessions = new FakeSessions((sessionId, params) => ({
     sessionId,
@@ -55,23 +66,9 @@ test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', 
   try {
     const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
     ;(agent as any).sessions = sessions as any
-    ;(agent as any).store = {
-      get(sessionId: string) {
-        if (sessionId !== 'stored-session') return null
-        return {
-          sessionId,
-          cwd: '/tmp/store-project',
-          sessionFile: '/tmp/store-project/session.jsonl',
-          updatedAt: new Date().toISOString()
-        }
-      },
-      upsert(entry: any) {
-        storeUpserts.push(entry)
-      }
-    }
 
     const result = await agent.prompt({
-      sessionId: 'stored-session',
+      sessionId: 'discovered-session',
       prompt: [{ type: 'text', text: 'hello again' }],
       _meta: { 'magpi-acp/client-message-id': 'client-message-1' }
     } as any)
@@ -80,24 +77,19 @@ test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', 
     assert.deepEqual(spawnCalls, [
       {
         cwd: '/tmp/store-project',
-        sessionPath: '/tmp/store-project/session.jsonl',
+        sessionPath: sessionFile,
         piCommand: process.env.MAGPI_ACP_PI_COMMAND
       }
     ])
     assert.deepEqual(promptCalls, [['hello again', []]])
-    assert.deepEqual(storeUpserts, [
-      {
-        sessionId: 'stored-session',
-        cwd: '/tmp/store-project',
-        sessionFile: '/tmp/store-project/session.jsonl'
-      }
-    ])
   } finally {
     PiRpcProcess.spawn = originalSpawn
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir
   }
 })
 
-test('MagPiAcpAgent: setSessionConfigOption auto-restores via pi session discovery when SessionStore misses', async () => {
+test('MagPiAcpAgent: setSessionConfigOption auto-restores via Pi session discovery', async () => {
   const conn = new FakeAgentSideConnection()
   const root = mkdtempSync(join(tmpdir(), 'magpi-acp-restore-fallback-'))
   const sessionsDir = join(root, 'sessions', '--tmp--fallback-project--')
@@ -119,7 +111,6 @@ test('MagPiAcpAgent: setSessionConfigOption auto-restores via pi session discove
 
   process.env.PI_CODING_AGENT_DIR = root
 
-  const storeUpserts: any[] = []
   const setModelCalls: Array<{ provider: string; modelId: string }> = []
   const spawnCalls: any[] = []
   const state = {
@@ -155,14 +146,6 @@ test('MagPiAcpAgent: setSessionConfigOption auto-restores via pi session discove
   try {
     const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
     ;(agent as any).sessions = sessions as any
-    ;(agent as any).store = {
-      get() {
-        return null
-      },
-      upsert(entry: any) {
-        storeUpserts.push(entry)
-      }
-    }
 
     const result = await agent.setSessionConfigOption({
       sessionId: 'fallback-session',
@@ -179,18 +162,6 @@ test('MagPiAcpAgent: setSessionConfigOption auto-restores via pi session discove
     ])
     assert.deepEqual(setModelCalls, [{ provider: 'test', modelId: 'beta' }])
     assert.equal(result.configOptions.find(option => option.id === 'model')?.currentValue, 'test/beta')
-    assert.deepEqual(storeUpserts, [
-      {
-        sessionId: 'fallback-session',
-        cwd: '/tmp/fallback-project',
-        sessionFile
-      },
-      {
-        sessionId: 'fallback-session',
-        cwd: '/tmp/fallback-project',
-        sessionFile
-      }
-    ])
     assert.deepEqual(conn.updates, [
       {
         sessionId: 'fallback-session',

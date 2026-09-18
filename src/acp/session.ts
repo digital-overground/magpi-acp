@@ -14,7 +14,6 @@ import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { PiRpcProcess, PiRpcSpawnError, type PiRpcEvent } from '../pi-rpc/process.js'
 import { maybeAuthRequiredError } from './auth-required.js'
-import { SessionStore } from './session-store.js'
 import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
 import {
   bashCommand,
@@ -215,8 +214,6 @@ function toUsageUpdate(stats: unknown): SessionUpdate | undefined {
 export class SessionManager {
   private sessions = new Map<string, MagPiAcpSession>()
 
-  constructor(private readonly store = new SessionStore()) {}
-
   /** Dispose all sessions and their underlying pi subprocesses. */
   disposeAll(): void {
     for (const [id] of this.sessions) this.close(id)
@@ -278,11 +275,6 @@ export class SessionManager {
       if (typeof state.sessionId !== 'string' || typeof state.sessionFile !== 'string') {
         throw RequestError.internalError({}, 'Pi did not return the forked session identity.')
       }
-      this.store.upsert({
-        cwd: params.cwd,
-        sessionFile: state.sessionFile,
-        sessionId: state.sessionId
-      })
       return state.sessionId
     } finally {
       proc.dispose()
@@ -305,18 +297,18 @@ export class SessionManager {
       throw e
     }
 
-    let state: any = null
+    let state: unknown
     try {
-      state = (await proc.getState()) as any
-    } catch {
-      state = null
+      state = await proc.getState()
+    } catch (error) {
+      proc.dispose()
+      throw error
     }
 
-    const sessionId = typeof state?.sessionId === 'string' ? state.sessionId : crypto.randomUUID()
-    const sessionFile = typeof state?.sessionFile === 'string' ? state.sessionFile : null
-
-    if (sessionFile) {
-      this.store.upsert({ sessionId, cwd: params.cwd, sessionFile })
+    const sessionId = (state as { sessionId?: unknown } | null)?.sessionId
+    if (typeof sessionId !== 'string') {
+      proc.dispose()
+      throw RequestError.internalError({}, 'Pi did not return the new session identity.')
     }
 
     const session = new MagPiAcpSession({

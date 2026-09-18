@@ -88,15 +88,6 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     assert.ok(s)
     assert.equal(s?.cwd, '/tmp/project')
     assert.equal(s?.title, 'My Named Session')
-    ;(agent as any).store = {
-      get: () => ({
-        sessionId: 'sess-1',
-        cwd: '/tmp/project',
-        sessionFile,
-        updatedAt: '2026-02-11T00:00:04.000Z'
-      }),
-      upsert: () => {}
-    }
 
     // 2) load session: mock spawn to return fake proc with compacted history
     const originalSpawn = PiRpcProcess.spawn

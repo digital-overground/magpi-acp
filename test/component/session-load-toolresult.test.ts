@@ -1,18 +1,25 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
 import { PiRpcProcess } from '../../src/pi-rpc/process.js'
 
-class FakeStore {
-  get(_sessionId: string) {
-    return { sessionId: 's1', cwd: '/tmp/project', sessionFile: '/tmp/s.jsonl', updatedAt: new Date().toISOString() }
-  }
-  upsert() {}
-}
-
 test('MagPiAcpAgent: loadSession restores tool arguments from their assistant calls', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-tool-restore-'))
+  const sessionsDir = join(root, 'sessions', '--tmp--project--')
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR
+  mkdirSync(sessionsDir, { recursive: true })
+  writeFileSync(
+    join(sessionsDir, '0000_s1.jsonl'),
+    JSON.stringify({ type: 'session', id: 's1', cwd: '/tmp/project' }) + '\n',
+    'utf8'
+  )
+  process.env.PI_CODING_AGENT_DIR = root
+
   const originalSpawn = PiRpcProcess.spawn
   ;(PiRpcProcess as any).spawn = async () => {
     return {
@@ -50,7 +57,6 @@ test('MagPiAcpAgent: loadSession restores tool arguments from their assistant ca
   try {
     const conn = new FakeAgentSideConnection()
     const agent = new MagPiAcpAgent(asAgentConn(conn))
-    ;(agent as any).store = new FakeStore()
 
     await agent.loadSession({ sessionId: 's1', cwd: '/tmp/project', mcpServers: [] } as any)
 
@@ -71,5 +77,7 @@ test('MagPiAcpAgent: loadSession restores tool arguments from their assistant ca
     assert.deepEqual(read.locations, [{ path: '/tmp/project/src/a.ts' }])
   } finally {
     PiRpcProcess.spawn = originalSpawn
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir
   }
 })
