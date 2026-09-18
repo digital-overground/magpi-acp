@@ -60,23 +60,6 @@ export function getRoles(): PiRole[] {
 }
 
 /**
- * Mirror pi settings semantics (global + project merge, project overrides global).
- * Only returns the bits we currently need.
- */
-export function getEnableSkillCommands(cwd: string): boolean {
-  const merged = getMergedSettings(cwd)
-
-  const direct = merged.enableSkillCommands
-  if (typeof direct === 'boolean') return direct
-
-  // Back-compat: some versions used skills.enableSkillCommands
-  const nested = isObject(merged.skills) ? merged.skills.enableSkillCommands : undefined
-  if (typeof nested === 'boolean') return nested
-
-  return true
-}
-
-/**
  * Mirror pi's quietStartup setting: if true, pi suppresses the verbose startup prelude.
  * We use it to decide whether to synthesize + emit our own "startup info" message.
  */

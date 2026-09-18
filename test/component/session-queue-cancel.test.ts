@@ -12,8 +12,7 @@ test('MagPiAcpSession: cancel clears queued prompts', async () => {
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   const first = session.prompt('one')

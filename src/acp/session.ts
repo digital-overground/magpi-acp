@@ -14,7 +14,6 @@ import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { PiRpcProcess, PiRpcSpawnError, type PiRpcEvent } from '../pi-rpc/process.js'
 import { maybeAuthRequiredError } from './auth-required.js'
-import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
 import {
   bashCommand,
   bashExitCode,
@@ -33,7 +32,6 @@ type SessionCreateParams = {
   mcpServers: McpServer[]
   conn: AgentSideConnection
   supportsFormElicitation?: boolean
-  fileCommands?: import('./slash-commands.js').FileSlashCommand[]
   piCommand?: string
 }
 
@@ -317,8 +315,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc,
       conn: params.conn,
-      supportsFormElicitation: params.supportsFormElicitation,
-      fileCommands: params.fileCommands ?? []
+      supportsFormElicitation: params.supportsFormElicitation
     })
 
     this.sessions.set(sessionId, session)
@@ -345,8 +342,7 @@ export class SessionManager {
       mcpServers: params.mcpServers,
       proc: params.proc,
       conn: params.conn,
-      supportsFormElicitation: params.supportsFormElicitation,
-      fileCommands: params.fileCommands ?? []
+      supportsFormElicitation: params.supportsFormElicitation
     })
 
     this.sessions.set(sessionId, session)
@@ -365,7 +361,6 @@ export class MagPiAcpSession {
   readonly proc: PiRpcProcess
   private readonly conn: AgentSideConnection
   private readonly supportsFormElicitation: boolean
-  private readonly fileCommands: FileSlashCommand[]
 
   // Used to map abort semantics to ACP stopReason.
   // Applies to the currently running turn.
@@ -403,7 +398,6 @@ export class MagPiAcpSession {
     proc: PiRpcProcess
     conn: AgentSideConnection
     supportsFormElicitation?: boolean
-    fileCommands?: FileSlashCommand[]
   }) {
     this.sessionId = opts.sessionId
     this.cwd = opts.cwd
@@ -411,7 +405,6 @@ export class MagPiAcpSession {
     this.proc = opts.proc
     this.conn = opts.conn
     this.supportsFormElicitation = opts.supportsFormElicitation ?? false
-    this.fileCommands = opts.fileCommands ?? []
 
     this.proc.onEvent(ev => this.handlePiEvent(ev))
   }
@@ -442,11 +435,8 @@ export class MagPiAcpSession {
   }
 
   async prompt(message: string, images: unknown[] = []): Promise<StopReason> {
-    // pi RPC mode disables slash command expansion, so we do it here.
-    const expandedMessage = expandSlashCommand(message, this.fileCommands)
-
     const turnPromise = new Promise<StopReason>((resolve, reject) => {
-      const queued: QueuedTurn = { message: expandedMessage, images, resolve, reject }
+      const queued: QueuedTurn = { message, images, resolve, reject }
 
       // If a turn is already running, enqueue.
       if (this.pendingTurn) {

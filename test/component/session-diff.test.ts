@@ -16,8 +16,7 @@ function createSession(cwd: string) {
     cwd,
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   return { conn, proc }

@@ -34,7 +34,7 @@ test('MagPiAcpAgent: /steering is handled adapter-side', async () => {
   proc.getState = async () => ({ steeringMode: 'one-at-a-time' })
 
   const agent = new MagPiAcpAgent(asAgentConn(conn))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
 
   const res = await agent.prompt({
     sessionId: 's1',
@@ -57,7 +57,7 @@ test('MagPiAcpAgent: /name sets session display name adapter-side', async () => 
   }
 
   const agent = new MagPiAcpAgent(asAgentConn(conn))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
 
   const res = await agent.prompt({
     sessionId: 's1',
@@ -100,7 +100,6 @@ test('MagPiAcpAgent: automatically names a thread from its first user message', 
     sessionId: 's1',
     cwd: process.cwd(),
     proc,
-    fileCommands: [],
     prompt: async () => {
       sequence.push('prompt')
       return 'end_turn'
@@ -157,7 +156,7 @@ test('MagPiAcpAgent: standard fork clones the current Pi leaf without metadata',
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
   proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl' })
-  const sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] })
+  const sessions = new FakeSessions({ sessionId: 's1', proc })
   const agent = new MagPiAcpAgent(asAgentConn(conn))
   ;(agent as any).sessions = sessions as any
 
@@ -179,7 +178,7 @@ test('MagPiAcpAgent: standard fork clones the current Pi leaf without metadata',
 test('MagPiAcpAgent: targeted fork passes a native Pi entry ID', async () => {
   const proc = new FakePiRpcProcess()
   proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl' })
-  const sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] })
+  const sessions = new FakeSessions({ sessionId: 's1', proc })
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
   ;(agent as any).sessions = sessions as any
 
@@ -203,7 +202,7 @@ test('MagPiAcpAgent: fork picker returns Pi native fork messages unchanged', asy
   const messages = [{ entryId: 'pi-user-1', text: 'Fix login' }]
   proc.getForkMessages = async () => messages
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
 
   assert.deepEqual(await agent.extMethod(MAGPI_ACP_FORK_MESSAGES_METHOD, { sessionId: 's1' }), { messages })
 })
@@ -213,7 +212,7 @@ test('MagPiAcpAgent: tree picker returns Pi native tree and leaf unchanged', asy
   const tree = [{ entry: { id: 'pi-user-1', type: 'message' }, children: [] }]
   proc.getTree = async () => ({ tree, leafId: 'pi-user-1' })
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
 
   assert.deepEqual(await agent.extMethod(MAGPI_ACP_TREE_METHOD, { sessionId: 's1' }), {
     tree,
@@ -238,7 +237,7 @@ test('MagPiAcpAgent: tree navigation uses a native message ID and keeps the sess
   proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl', sessionId: 's1' })
   proc.navigateTree = async (entryId: string) => navigations.push(entryId)
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
 
   assert.deepEqual(
     await agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
@@ -257,7 +256,7 @@ test('MagPiAcpAgent: tree navigation rejects non-message and stale entry IDs', a
     leafId: 'compaction-1'
   })
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc, fileCommands: [] }) as any
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
 
   await assert.rejects(
     agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {

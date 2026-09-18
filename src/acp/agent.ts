@@ -49,8 +49,8 @@ import {
   isBashTool
 } from './translate/bash.js'
 import { promptToPiMessage } from './translate/prompt.js'
-import { loadSlashCommands, parseCommandArgs, toAvailableCommands } from './slash-commands.js'
-import { getEnableSkillCommands, getQuietStartup, getRoles, type PiRole } from './pi-settings.js'
+import { parseCommandArgs } from './slash-commands.js'
+import { getQuietStartup, getRoles, type PiRole } from './pi-settings.js'
 import { toAvailableCommandsFromPiGetCommands } from './pi-commands.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { isAbsolute } from 'node:path'
@@ -211,14 +211,12 @@ export class MagPiAcpAgent implements ACPAgent {
         throw e
       }
 
-      const fileCommands = loadSlashCommands(cwd)
       const session = this.sessions.getOrCreate(sessionId, {
         cwd,
         mcpServers: opts?.mcpServers ?? [],
         conn: this.conn,
         supportsFormElicitation: this.supportsFormElicitation,
-        proc,
-        fileCommands
+        proc
       })
 
       this.lastSessionCwd = cwd
@@ -279,16 +277,12 @@ export class MagPiAcpAgent implements ACPAgent {
 
     this.lastSessionCwd = params.cwd
 
-    const fileCommands = loadSlashCommands(params.cwd)
-    const enableSkillCommands = getEnableSkillCommands(params.cwd)
-
     // Pi doesn't support mcpServers, but we accept and store.
     const session = await this.sessions.create({
       cwd: params.cwd,
       mcpServers: params.mcpServers,
       conn: this.conn,
       supportsFormElicitation: this.supportsFormElicitation,
-      fileCommands,
       piCommand: process.env.MAGPI_ACP_PI_COMMAND
     })
 
@@ -394,29 +388,18 @@ export class MagPiAcpAgent implements ACPAgent {
     // Advertise slash commands after session/new so clients recognize the session ID.
     setTimeout(() => {
       void (async () => {
+        let commands: AvailableCommand[] = []
         try {
-          const { commands } = toAvailableCommandsFromPiGetCommands(await session.proc.getCommands(), {
-            enableSkillCommands,
-            includeExtensionCommands: false
-          })
-
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'available_commands_update',
-              availableCommands: mergeCommands(commands, builtinAvailableCommands())
-            }
-          })
-          return
+          commands = toAvailableCommandsFromPiGetCommands(await session.proc.getCommands())
         } catch {
-          // Fall back to file-based prompt templates (legacy behavior).
+          // Adapter commands remain available if Pi command discovery fails.
         }
 
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'available_commands_update',
-            availableCommands: mergeCommands(toAvailableCommands(fileCommands), builtinAvailableCommands())
+            availableCommands: mergeCommands(commands, builtinAvailableCommands())
           }
         })
       })()
@@ -1042,12 +1025,10 @@ export class MagPiAcpAgent implements ACPAgent {
 
     this.lastSessionCwd = stored.cwd
 
-    const enableSkillCommands = getEnableSkillCommands(stored.cwd)
     const session = await this.restoreSession(params.sessionId, {
       mcpServers: params.mcpServers
     })
     const proc = session.proc
-    const fileCommands = loadSlashCommands(stored.cwd)
 
     // Keep only one live Pi subprocess within an ACP connection.
     // (Tests sometimes stub out `this.sessions`, so guard the call.)
@@ -1192,30 +1173,18 @@ export class MagPiAcpAgent implements ACPAgent {
     // Advertise slash commands after the response so the client knows the session exists.
     setTimeout(() => {
       void (async () => {
+        let commands: AvailableCommand[] = []
         try {
-          const pi = (await proc.getCommands()) as any
-          const { commands } = toAvailableCommandsFromPiGetCommands(pi, {
-            enableSkillCommands,
-            includeExtensionCommands: false
-          })
-
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'available_commands_update',
-              availableCommands: mergeCommands(commands, builtinAvailableCommands())
-            }
-          })
-          return
+          commands = toAvailableCommandsFromPiGetCommands(await proc.getCommands())
         } catch {
-          // fall back
+          // Adapter commands remain available if Pi command discovery fails.
         }
 
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,
           update: {
             sessionUpdate: 'available_commands_update',
-            availableCommands: mergeCommands(toAvailableCommands(fileCommands), builtinAvailableCommands())
+            availableCommands: mergeCommands(commands, builtinAvailableCommands())
           }
         })
       })()

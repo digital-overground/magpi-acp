@@ -15,8 +15,7 @@ test('MagPiAcpSession: emits agent_message_chunk for text_delta', async () => {
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -47,8 +46,7 @@ test('MagPiAcpSession: emits agent_thought_chunk for thinking_delta', async () =
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -75,8 +73,7 @@ test('MagPiAcpSession: emits tool_call + tool_call_update + completes', async ()
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'bash', args: { command: 'ls' } })
@@ -137,8 +134,7 @@ test('MagPiAcpSession: emits tool locations from pi path args', async () => {
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'read', args: { path: 'src/acp/session.ts' } })
@@ -160,8 +156,7 @@ test('MagPiAcpSession: handles extension select via ACP permission request', asy
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -202,8 +197,7 @@ test('MagPiAcpSession: handles extension confirm via ACP permission request', as
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -234,8 +228,7 @@ test('MagPiAcpSession: sends cancelled response when ACP confirm is cancelled', 
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'extension_ui_request', id: 'ui-5', method: 'confirm', title: 'Continue?' })
@@ -259,8 +252,7 @@ test('MagPiAcpSession: combines an extension selection with custom context', asy
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
-    supportsFormElicitation: true,
-    fileCommands: []
+    supportsFormElicitation: true
   })
 
   proc.emit({
@@ -338,8 +330,7 @@ test('MagPiAcpSession: turns an extension-provided free-form choice into a text 
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
-    supportsFormElicitation: true,
-    fileCommands: []
+    supportsFormElicitation: true
   })
 
   proc.emit({
@@ -381,8 +372,7 @@ test('MagPiAcpSession: handles extension confirm with ACP elicitation', async ()
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
-    supportsFormElicitation: true,
-    fileCommands: []
+    supportsFormElicitation: true
   })
 
   proc.emit({
@@ -417,8 +407,7 @@ test('MagPiAcpSession: handles input and editor with ACP elicitation', async () 
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
-    supportsFormElicitation: true,
-    fileCommands: []
+    supportsFormElicitation: true
   })
 
   conn.nextElicitationResponse = { action: 'accept', content: { answer: 'Kyle' } }
@@ -468,8 +457,7 @@ test('MagPiAcpSession: cancels extension UI request when ACP elicitation is not 
     mcpServers: [],
     proc: proc as any,
     conn: asAgentConn(conn),
-    supportsFormElicitation: true,
-    fileCommands: []
+    supportsFormElicitation: true
   })
 
   proc.emit({
@@ -492,8 +480,7 @@ test('MagPiAcpSession: cancels unsupported input and editor extension UI request
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'extension_ui_request', id: 'ui-3', method: 'input', title: 'Enter name' })
@@ -519,8 +506,7 @@ test('MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attem
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'auto_retry_start', attempt: 2, maxAttempts: 5, delayMs: 2400 })
@@ -543,8 +529,7 @@ test('MagPiAcpSession: formats a positive sub-second auto_retry_start delay as w
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 1 })
@@ -567,8 +552,7 @@ test('MagPiAcpSession: falls back to a generic retry message when auto_retry_sta
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'auto_retry_start', attempt: 'oops', maxAttempts: null, delayMs: 'bad' } as any)
@@ -591,8 +575,7 @@ test('MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_s
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -620,8 +603,7 @@ test('MagPiAcpSession: emits agent_message_chunk for auto_retry_end', async () =
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'auto_retry_end' } as any)
@@ -644,8 +626,7 @@ test('MagPiAcpSession: emits agent_message_chunk for auto_compaction_start', asy
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'auto_compaction_start' } as any)
@@ -668,8 +649,7 @@ test('MagPiAcpSession: emits agent_message_chunk for auto_compaction_end', async
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'auto_compaction_end' } as any)
@@ -695,8 +675,7 @@ test('MagPiAcpSession: preserves ordering when auto_retry_start is interleaved w
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'before ' } })
@@ -727,8 +706,7 @@ test('MagPiAcpSession: defers tool locations until execution starts with complet
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -787,8 +765,7 @@ test('MagPiAcpSession: emits edit tool line when oldText matches uniquely', asyn
     cwd,
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -819,8 +796,7 @@ test('MagPiAcpSession: emits edit tool line from edits array when oldText matche
     cwd,
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -851,8 +827,7 @@ test('MagPiAcpSession: emits edit tool line from stringified edits array', async
     cwd,
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -883,8 +858,7 @@ test('MagPiAcpSession: omits edit tool line when oldText matches multiple times'
     cwd,
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -910,8 +884,7 @@ test('MagPiAcpSession: emits an ACP plan from todo extension results', async () 
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   proc.emit({
@@ -951,8 +924,7 @@ test('MagPiAcpSession: prompt remains pending through multiple agent_end events 
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   let resolved = false
@@ -984,8 +956,7 @@ test('MagPiAcpSession: emits ACP context usage and cost after a turn', async () 
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   const prompt = session.prompt('hello')
@@ -1010,8 +981,7 @@ test('MagPiAcpSession: does not re-emit startup info on first prompt after it wa
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   const notice = 'New version available: v0.74.0 (installed v0.73.1).'
@@ -1051,8 +1021,7 @@ test('MagPiAcpSession: cancel flips stopReason to cancelled', async () => {
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   const p = session.prompt('hello')
@@ -1076,8 +1045,7 @@ test('MagPiAcpSession: queues concurrent prompt and starts it after agent_settle
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   const first = session.prompt('one')
@@ -1117,8 +1085,7 @@ test('MagPiAcpSession: cancel clears queued prompts', async () => {
     cwd: process.cwd(),
     mcpServers: [],
     proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: []
+    conn: asAgentConn(conn)
   })
 
   const first = session.prompt('one')
@@ -1137,37 +1104,4 @@ test('MagPiAcpSession: cancel clears queued prompts', async () => {
 
   assert.equal(r1, 'cancelled')
   assert.equal(r2, 'cancelled')
-})
-
-test('MagPiAcpSession: expands /command before sending to pi', async () => {
-  const conn = new FakeAgentSideConnection()
-  const proc = new FakePiRpcProcess()
-
-  const session = new MagPiAcpSession({
-    sessionId: 's1',
-    cwd: process.cwd(),
-    mcpServers: [],
-    proc: proc as any,
-    conn: asAgentConn(conn),
-    fileCommands: [
-      {
-        name: 'hello',
-        description: 'test',
-        content: 'Say hello to $1',
-        source: '(project)'
-      }
-    ]
-  })
-
-  const p = session.prompt('/hello world')
-  assert.equal(proc.prompts.length, 1)
-  assert.equal(proc.prompts[0]!.message, 'Say hello to world')
-
-  proc.emit({ type: 'agent_start' })
-  proc.emit({ type: 'turn_end' })
-  proc.emit({ type: 'agent_end' })
-  proc.emit({ type: 'agent_settled' })
-
-  const reason = await p
-  assert.equal(reason, 'end_turn')
 })

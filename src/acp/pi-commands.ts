@@ -1,4 +1,5 @@
 import type { AvailableCommand } from '@agentclientprotocol/sdk'
+import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from '../pi-rpc/tree-command.js'
 
 export type PiRpcCommandInfo = {
   name?: unknown
@@ -19,16 +20,7 @@ function describeFallback(c: PiRpcCommandInfo): string {
   return parts.length ? `(${parts.join(':')})` : '(command)'
 }
 
-export function toAvailableCommandsFromPiGetCommands(
-  data: unknown,
-  opts?: { enableSkillCommands?: boolean; includeExtensionCommands?: boolean }
-): {
-  commands: AvailableCommand[]
-  raw: PiRpcCommandInfo[]
-} {
-  const enableSkillCommands = opts?.enableSkillCommands ?? true
-  const includeExtensionCommands = opts?.includeExtensionCommands ?? false
-
+export function toAvailableCommandsFromPiGetCommands(data: unknown): AvailableCommand[] {
   const root: any = data
   const commandsRaw: PiRpcCommandInfo[] = Array.isArray(root?.commands)
     ? root.commands
@@ -40,12 +32,7 @@ export function toAvailableCommandsFromPiGetCommands(
 
   for (const c of commandsRaw) {
     const name = typeof c?.name === 'string' ? c.name.trim() : ''
-    if (!name) continue
-
-    const source = typeof c?.source === 'string' ? c.source : ''
-    if (!includeExtensionCommands && source === 'extension') continue
-
-    if (!enableSkillCommands && name.startsWith('skill:')) continue
+    if (!name || name === MAGPI_ACP_NAVIGATE_TREE_COMMAND) continue
 
     const desc = typeof c?.description === 'string' ? c.description.trim() : ''
 
@@ -55,5 +42,5 @@ export function toAvailableCommandsFromPiGetCommands(
     })
   }
 
-  return { commands: out, raw: commandsRaw }
+  return out
 }
