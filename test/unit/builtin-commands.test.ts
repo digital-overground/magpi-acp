@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MagPiAcpAgent, generateThreadTitle } from '../../src/acp/agent.js'
+import { MagPiAcpAgent } from '../../src/acp/agent.js'
 import {
   MAGPI_ACP_FORK_ENTRY_ID_META,
   MAGPI_ACP_FORK_MESSAGES_METHOD,
@@ -8,9 +8,6 @@ import {
   MAGPI_ACP_TREE_METHOD
 } from '../../src/pi-rpc/tree-command.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 class FakeSessions {
   forkParams: unknown
@@ -74,43 +71,27 @@ test('MagPiAcpAgent: /name sets session display name adapter-side', async () => 
   assert.match((last as any).update.content.text, /Session name set: My Session/)
 })
 
-test('MagPiAcpAgent: automatically names a thread from its first user message', async () => {
-  const conn = new FakeAgentSideConnection()
+test('MagPiAcpAgent: leaves automatic thread naming to the client', async () => {
   const proc = new FakePiRpcProcess() as any
-  let sessionName: string | undefined
-  let titleRequest: any
-  const sequence: string[] = []
-  let titleApplied!: () => void
-  const applied = new Promise<void>(resolve => {
-    titleApplied = resolve
-  })
-
-  proc.getState = async () => ({
-    sessionName,
-    model: { provider: 'openai-codex', id: 'gpt-5.6-sol' }
-  })
+  let generated = false
+  let named = false
+  proc.getState = async () => ({ model: { provider: 'test', id: 'model' } })
   proc.getMessages = async () => ({ messages: [] })
-  proc.setSessionName = async (name: string) => {
-    sequence.push('name')
-    sessionName = name
-    titleApplied()
+  proc.setSessionName = async () => {
+    named = true
   }
 
   const session = {
     sessionId: 's1',
     cwd: process.cwd(),
     proc,
-    prompt: async () => {
-      sequence.push('prompt')
-      return 'end_turn'
-    },
+    prompt: async () => 'end_turn',
     wasCancelRequested: () => false
   }
-  const agent = new MagPiAcpAgent(asAgentConn(conn))
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
   ;(agent as any).sessions = new FakeSessions(session) as any
-  ;(agent as any).generateTitle = async (request: any) => {
-    sequence.push('generate')
-    titleRequest = request
+  ;(agent as any).generateTitle = async () => {
+    generated = true
     return 'Fix Login Cache Bug'
   }
 
@@ -118,38 +99,10 @@ test('MagPiAcpAgent: automatically names a thread from its first user message', 
     sessionId: 's1',
     prompt: [{ type: 'text', text: 'fix the login caching bug' }]
   } as any)
-  await applied
   await new Promise(resolve => setImmediate(resolve))
 
-  assert.deepEqual(sequence, ['prompt', 'generate', 'name'])
-  assert.equal(titleRequest.model, 'openai-codex/gpt-5.6-sol')
-  assert.equal(titleRequest.user, 'fix the login caching bug')
-  assert.equal(sessionName, 'Fix Login Cache Bug')
-  const info = conn.updates.find(update => (update as any).update?.sessionUpdate === 'session_info_update')
-  assert.equal((info as any)?.update?.title, 'Fix Login Cache Bug')
-})
-
-test('generateThreadTitle closes stdin so Pi can process the prompt', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'magpi-title-'))
-  const command = join(dir, 'fake-pi')
-  const previousCommand = process.env.MAGPI_ACP_PI_COMMAND
-  writeFileSync(
-    command,
-    '#!/usr/bin/env node\nprocess.stdin.resume()\nprocess.stdin.on("end", () => console.log("One Two Three Four Five Six Seven"))\n'
-  )
-  chmodSync(command, 0o755)
-  process.env.MAGPI_ACP_PI_COMMAND = command
-
-  try {
-    assert.equal(
-      await generateThreadTitle({ cwd: dir, model: 'test/model', user: 'test prompt' }),
-      'One Two Three Four Five Six'
-    )
-  } finally {
-    if (previousCommand === undefined) delete process.env.MAGPI_ACP_PI_COMMAND
-    else process.env.MAGPI_ACP_PI_COMMAND = previousCommand
-    rmSync(dir, { recursive: true, force: true })
-  }
+  assert.equal(generated, false)
+  assert.equal(named, false)
 })
 
 test('MagPiAcpAgent: standard fork clones the current Pi leaf without metadata', async () => {

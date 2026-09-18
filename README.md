@@ -18,7 +18,7 @@ MagPi ACP provides the Agent runtime behind Mischief Threads:
 - Exposes role, model, and thinking controls.
 - Maps Pi extension prompts to inline Mischief elicitation.
 - Advertises Terminal Auth so Mischief can open Pi setup in an integrated terminal.
-- Generates a short title from the first prompt and supports persistent manual titles.
+- Uses first-prompt history titles and supports persistent manual Pi session names.
 - Exposes Pi's native extension, skill, and prompt-template commands.
 
 Standard ACP behavior does not require private metadata. Optional Mischief integration uses:
