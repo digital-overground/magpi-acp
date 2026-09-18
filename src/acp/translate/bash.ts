@@ -1,100 +1,118 @@
-import type { ToolCallContent } from '@agentclientprotocol/sdk'
+import type { ToolCallContent } from "@agentclientprotocol/sdk";
 
-type BashCommandRecord = {
-  command?: unknown
-  cmd?: unknown
-  args?: BashCommandRecord
-  input?: BashCommandRecord
-  rawInput?: BashCommandRecord
-  toolInput?: BashCommandRecord
-  details?: BashCommandRecord
+interface BashCommandRecord {
+  command?: unknown;
+  cmd?: unknown;
+  args?: BashCommandRecord;
+  input?: BashCommandRecord;
+  rawInput?: BashCommandRecord;
+  toolInput?: BashCommandRecord;
+  details?: BashCommandRecord;
 }
 
-type BashResultRecord = {
-  content?: unknown
-  details?: unknown
-  stdout?: unknown
-  stderr?: unknown
-  output?: unknown
-  exitCode?: unknown
-  code?: unknown
+interface BashResultRecord {
+  content?: unknown;
+  details?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+  output?: unknown;
+  exitCode?: unknown;
+  code?: unknown;
 }
 
-export function isBashTool(toolName: string): boolean {
-  return toolName.toLowerCase() === 'bash'
-}
+const firstString = (...values: unknown[]): string | undefined =>
+  values.find((value): value is string => typeof value === "string");
 
-export function bashCommand(value: unknown): string | undefined {
-  const record = value as BashCommandRecord | null | undefined
-  const command =
-    record?.command ??
-    record?.cmd ??
-    record?.args?.command ??
-    record?.args?.cmd ??
-    record?.input?.command ??
-    record?.input?.cmd ??
-    record?.rawInput?.command ??
-    record?.rawInput?.cmd ??
-    record?.toolInput?.command ??
-    record?.toolInput?.cmd ??
-    record?.details?.command ??
-    record?.details?.cmd
+export const isBashTool = (toolName: string): boolean =>
+  toolName.toLowerCase() === "bash";
 
-  return typeof command === 'string' && command.trim() ? command : undefined
-}
+export const bashCommand = (value: unknown): string | undefined => {
+  const record = value as BashCommandRecord | null | undefined;
+  const nested = [
+    record,
+    record?.args,
+    record?.input,
+    record?.rawInput,
+    record?.toolInput,
+    record?.details,
+  ];
+  for (const candidate of nested) {
+    const command = firstString(candidate?.command, candidate?.cmd);
+    if (command?.trim()) {
+      return command;
+    }
+  }
+  return undefined;
+};
 
-export function bashResultText(result: unknown): string {
-  const record = result as BashResultRecord | null | undefined
-  const content = record?.content
+export const bashResultText = (result: unknown): string => {
+  const record = result as BashResultRecord | null | undefined;
+  const content = record?.content;
   if (Array.isArray(content)) {
     const texts = content
-      .map(c => {
-        const block = c as { type?: unknown; text?: unknown }
-        return block.type === 'text' && typeof block.text === 'string' ? block.text : ''
+      .map((item) => {
+        const block = item as { type?: unknown; text?: unknown };
+        return block.type === "text" && typeof block.text === "string"
+          ? block.text
+          : "";
       })
-      .filter(Boolean)
-    if (texts.length) return texts.join('')
+      .filter(Boolean);
+    if (texts.length) {
+      return texts.join("");
+    }
   }
 
-  const details = record?.details as BashResultRecord | null | undefined
-  const stdout =
-    (typeof details?.stdout === 'string' ? details.stdout : undefined) ??
-    (typeof record?.stdout === 'string' ? record.stdout : undefined) ??
-    (typeof details?.output === 'string' ? details.output : undefined) ??
-    (typeof record?.output === 'string' ? record.output : undefined)
-  const stderr =
-    (typeof details?.stderr === 'string' ? details.stderr : undefined) ??
-    (typeof record?.stderr === 'string' ? record.stderr : undefined)
+  const details = record?.details as BashResultRecord | null | undefined;
+  const stdout = firstString(
+    details?.stdout,
+    record?.stdout,
+    details?.output,
+    record?.output
+  );
+  const stderr = firstString(details?.stderr, record?.stderr);
 
-  return [stdout, stderr].filter((part): part is string => typeof part === 'string' && part.length > 0).join('\n')
-}
+  return [stdout, stderr]
+    .filter(
+      (part): part is string => typeof part === "string" && part.length > 0
+    )
+    .join("\n");
+};
 
-export function bashExitCode(result: unknown, isError: boolean): number {
-  const record = result as BashResultRecord | null | undefined
-  const details = record?.details as BashResultRecord | null | undefined
-  const exitCode = details?.exitCode ?? record?.exitCode ?? details?.code ?? record?.code
-  return typeof exitCode === 'number' ? exitCode : isError ? 1 : 0
-}
+export const bashExitCode = (result: unknown, isError: boolean): number => {
+  const record = result as BashResultRecord | null | undefined;
+  const details = record?.details as BashResultRecord | null | undefined;
+  const exitCode = [
+    details?.exitCode,
+    record?.exitCode,
+    details?.code,
+    record?.code,
+  ].find((value): value is number => typeof value === "number");
+  if (exitCode !== undefined) {
+    return exitCode;
+  }
+  return isError ? 1 : 0;
+};
 
-export function bashOutputDelta(previous: string, next: string): string {
-  return next.startsWith(previous) ? next.slice(previous.length) : next
-}
+export const bashOutputDelta = (previous: string, next: string): string =>
+  next.startsWith(previous) ? next.slice(previous.length) : next;
 
-export function bashTerminalContent(toolCallId: string): ToolCallContent[] {
-  return [{ type: 'terminal', terminalId: toolCallId }] satisfies ToolCallContent[]
-}
+export const bashTerminalContent = (toolCallId: string): ToolCallContent[] =>
+  [{ terminalId: toolCallId, type: "terminal" }] satisfies ToolCallContent[];
 
-export function bashTerminalInfoMeta(toolCallId: string, cwd: string) {
+export const bashTerminalInfoMeta = (toolCallId: string, cwd: string) =>
   // ACP clients can render `execute` tools as terminals when paired with
   // terminal content and metadata. See the execute tool schema:
   // https://agentclientprotocol.com/protocol/schema#param-execute
-  return { terminal_info: { terminal_id: toolCallId, cwd } }
-}
+  ({ terminal_info: { cwd, terminal_id: toolCallId } });
 
-export function bashTerminalOutputMeta(toolCallId: string, data: string) {
-  return { terminal_output: { terminal_id: toolCallId, data } }
-}
+export const bashTerminalOutputMeta = (toolCallId: string, data: string) => ({
+  terminal_output: { data, terminal_id: toolCallId },
+});
 
-export function bashTerminalExitMeta(toolCallId: string, exitCode: number) {
-  return { terminal_exit: { terminal_id: toolCallId, exit_code: exitCode, signal: null } }
-}
+export const bashTerminalExitMeta = (toolCallId: string, exitCode: number) => ({
+  terminal_exit: {
+    exit_code: exitCode,
+    signal: null,
+    terminal_id: toolCallId,
+  },
+});

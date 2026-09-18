@@ -1,71 +1,85 @@
-import type { ContentBlock } from '@agentclientprotocol/sdk'
+import type { ContentBlock } from "@agentclientprotocol/sdk";
 
-export type PiImage = {
-  type: 'image'
-  mimeType: string
-  data: string
+export interface PiImage {
+  type: "image";
+  mimeType: string;
+  data: string;
 }
 
-export function promptToPiMessage(blocks: ContentBlock[]): {
-  message: string
-  images: PiImage[]
-} {
-  let message = ''
-  const images: PiImage[] = []
+export const promptToPiMessage = (
+  blocks: ContentBlock[]
+): {
+  message: string;
+  images: PiImage[];
+} => {
+  let message = "";
+  const images: PiImage[] = [];
 
   for (const b of blocks) {
     switch (b.type) {
-      case 'text':
-        message += b.text
-        break
+      case "text": {
+        message += b.text;
+        break;
+      }
 
-      case 'resource_link':
+      case "resource_link": {
         // A lightweight, human-readable hint for the LLM.
-        message += `\n[Context] ${b.uri}`
-        break
+        message += `\n[Context] ${b.uri}`;
+        break;
+      }
 
-      case 'image': {
+      case "image": {
         // pi expects base64 image bytes in `data` without a data-url prefix.
         images.push({
-          type: 'image',
+          data: b.data,
           mimeType: b.mimeType,
-          data: b.data
-        })
-        break
+          type: "image",
+        });
+        break;
       }
 
-      case 'resource': {
+      case "resource": {
         // Clients should not send this if embeddedContext=false, but be resilient.
-        const r: any = (b as any).resource
-        const uri = typeof r?.uri === 'string' ? r.uri : '(unknown)'
+        const r = b.resource as {
+          uri?: unknown;
+          text?: unknown;
+          blob?: unknown;
+          mimeType?: unknown;
+        };
+        const uri = typeof r.uri === "string" ? r.uri : "(unknown)";
 
-        if (typeof r?.text === 'string') {
+        if (typeof r?.text === "string") {
           // TextResourceContents
-          const mime = typeof r?.mimeType === 'string' ? r.mimeType : 'text/plain'
-          message += `\n[Embedded Context] ${uri} (${mime})\n${r.text}`
-        } else if (typeof r?.blob === 'string') {
+          const mime =
+            typeof r?.mimeType === "string" ? r.mimeType : "text/plain";
+          message += `\n[Embedded Context] ${uri} (${mime})\n${r.text}`;
+        } else if (typeof r?.blob === "string") {
           // BlobResourceContents
-          const mime = typeof r?.mimeType === 'string' ? r.mimeType : 'application/octet-stream'
-          const bytes = Buffer.byteLength(r.blob, 'base64')
-          message += `\n[Embedded Context] ${uri} (${mime}, ${bytes} bytes)`
+          const mime =
+            typeof r?.mimeType === "string"
+              ? r.mimeType
+              : "application/octet-stream";
+          const bytes = Buffer.byteLength(r.blob, "base64");
+          message += `\n[Embedded Context] ${uri} (${mime}, ${bytes} bytes)`;
         } else {
-          message += `\n[Embedded Context] ${uri}`
+          message += `\n[Embedded Context] ${uri}`;
         }
-        break
+        break;
       }
 
-      case 'audio': {
+      case "audio": {
         // Not supported by pi. Provide a marker so we don't silently drop context.
-        const bytes = Buffer.byteLength(b.data, 'base64')
-        message += `\n[Audio] (${b.mimeType}, ${bytes} bytes) not supported by magpi-acp`
-        break
+        const bytes = Buffer.byteLength(b.data, "base64");
+        message += `\n[Audio] (${b.mimeType}, ${bytes} bytes) not supported by magpi-acp`;
+        break;
       }
 
-      default:
+      default: {
         // Ignore unknown block types for now.
-        break
+        break;
+      }
     }
   }
 
-  return { message, images }
-}
+  return { images, message };
+};

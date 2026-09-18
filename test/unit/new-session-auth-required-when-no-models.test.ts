@@ -1,51 +1,59 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { MagPiAcpAgent } from '../../src/acp/agent.js'
-import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { MagPiAcpAgent } from "../../src/acp/agent.js";
+import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
 
 class FakeSessions {
-  closeCalls: string[] = []
+  private readonly session: Record<string, unknown>;
+  closeCalls: string[] = [];
 
-  constructor(private readonly session: any) {}
+  constructor(session: Record<string, unknown>) {
+    this.session = session;
+  }
 
-  async create(_params: any) {
-    return this.session
+  create(_params: unknown) {
+    return this.session;
   }
 
   close(sessionId: string) {
-    this.closeCalls.push(sessionId)
+    this.closeCalls.push(sessionId);
   }
 }
 
-test('MagPiAcpAgent: newSession throws AUTH_REQUIRED when pi reports zero available models', async () => {
-  const conn = new FakeAgentSideConnection()
+test("MagPiAcpAgent: newSession throws AUTH_REQUIRED when pi reports zero available models", async () => {
+  const conn = new FakeAgentSideConnection();
 
   const session = {
-    sessionId: 's1',
     cwd: process.cwd(),
     proc: {
-      async getAvailableModels() {
-        return { models: [] }
+      getAvailableModels() {
+        return Promise.resolve({ models: [] });
       },
-      async getState() {
-        return { thinkingLevel: 'medium', model: null }
-      }
-    }
-  }
+      getState() {
+        return Promise.resolve({ model: null, thinkingLevel: "medium" });
+      },
+    },
+    sessionId: "s1",
+  };
 
-  const sessions = new FakeSessions(session)
-  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
-  ;(agent as any).sessions = sessions as any
+  const sessions = new FakeSessions(session);
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
+  (agent as unknown as { sessions: unknown }).sessions = sessions as never;
 
-  let threw = false
+  let threw = false;
   try {
-    await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
-  } catch (e: any) {
-    threw = true
-    assert.equal(e?.code, -32000)
-    assert.match(String(e?.message), /Configure an API key or log in with an OAuth provider/i)
+    await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as never);
+  } catch (error: unknown) {
+    threw = true;
+    const details = error as { code?: unknown; message?: unknown };
+    assert.equal(details.code, -32_000);
+    assert.match(
+      String(details.message),
+      /Configure an API key or log in with an OAuth provider/iu
+    );
   }
 
-  assert.equal(threw, true)
-  assert.deepEqual(sessions.closeCalls, ['s1'])
-})
+  assert.equal(threw, true);
+  assert.deepEqual(sessions.closeCalls, ["s1"]);
+});

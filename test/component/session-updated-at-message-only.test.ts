@@ -6,33 +6,38 @@ import test from "node:test";
 
 import { listPiSessions } from "../../src/acp/pi-sessions.js";
 
-test("listPiSessions: respects sessionDir from pi settings.json", () => {
+test("listPiSessions: updatedAt prefers last message timestamp over later non-message entries", () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-test-"));
-  const customSessionsDir = path.join(root, "somewhere-else", "--p--");
-  mkdirSync(customSessionsDir, { recursive: true });
+  const sessionsDir = path.join(root, "sessions", "--p--");
+  mkdirSync(sessionsDir, { recursive: true });
 
-  writeFileSync(
-    path.join(root, "settings.json"),
-    JSON.stringify({ sessionDir: path.join(root, "somewhere-else") }, null, 2),
-    "utf-8"
-  );
+  const sessionFile = path.join(sessionsDir, "s.jsonl");
 
+  // Last message at 00:00:02, but a later session_info at 00:00:10.
+  // We want updatedAt == 00:00:02.
   writeFileSync(
-    path.join(customSessionsDir, "s.jsonl"),
+    sessionFile,
     `${[
       JSON.stringify({
         cwd: "/tmp/project",
-        id: "sess-custom",
+        id: "sess-1",
         timestamp: "2026-01-01T00:00:00.000Z",
         type: "session",
         version: 3,
       }),
       JSON.stringify({
-        id: "m1",
+        id: "a1b2c3d4",
         message: { content: "hi", role: "user" },
         parentId: null,
-        timestamp: "2026-01-01T00:00:01.000Z",
+        timestamp: "2026-01-01T00:00:02.000Z",
         type: "message",
+      }),
+      JSON.stringify({
+        id: "b1b2c3d4",
+        name: "named",
+        parentId: "a1b2c3d4",
+        timestamp: "2026-01-01T00:00:10.000Z",
+        type: "session_info",
       }),
     ].join("\n")}\n`,
     { encoding: "utf-8" }
@@ -42,9 +47,9 @@ test("listPiSessions: respects sessionDir from pi settings.json", () => {
   process.env.PI_CODING_AGENT_DIR = root;
 
   try {
-    const s = listPiSessions().find((x) => x.sessionId === "sess-custom");
-    assert.ok(s);
-    assert.equal(s?.sessionFile, path.join(customSessionsDir, "s.jsonl"));
+    const sessions = listPiSessions().filter((s) => s.sessionId === "sess-1");
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.updatedAt, "2026-01-01T00:00:02.000Z");
   } finally {
     if (oldEnv === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;

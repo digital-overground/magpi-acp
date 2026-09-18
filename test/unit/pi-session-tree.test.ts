@@ -1,56 +1,60 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { activeSessionMessages } from '../../src/acp/pi-session-tree.js'
+import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
 
-test('activeSessionMessages returns only messages on the latest branch', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'magpi-acp-tree-'))
-  const sessionFile = join(directory, 'session.jsonl')
+import { activeSessionMessages } from "../../src/acp/pi-session-tree.js";
+
+test("activeSessionMessages returns only messages on the latest branch", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "magpi-acp-tree-"));
+  const sessionFile = path.join(directory, "session.jsonl");
   const entries = [
-    { type: 'session', id: 'session-1' },
+    { id: "session-1", type: "session" },
     {
-      type: 'message',
-      id: 'user-1',
+      id: "user-1",
+      message: { content: "first", role: "user" },
       parentId: null,
-      message: { role: 'user', content: 'first' }
+      type: "message",
     },
     {
-      type: 'message',
-      id: 'assistant-abandoned',
-      parentId: 'user-1',
-      message: { role: 'assistant', content: 'old answer' }
+      id: "assistant-abandoned",
+      message: { content: "old answer", role: "assistant" },
+      parentId: "user-1",
+      type: "message",
     },
     {
-      type: 'message',
-      id: 'user-abandoned',
-      parentId: 'assistant-abandoned',
-      message: { role: 'user', content: 'old follow-up' }
+      id: "user-abandoned",
+      message: { content: "old follow-up", role: "user" },
+      parentId: "assistant-abandoned",
+      type: "message",
     },
     {
-      type: 'message',
-      id: 'assistant-2',
-      parentId: 'user-1',
-      message: { role: 'assistant', content: 'new answer' }
+      id: "assistant-2",
+      message: { content: "new answer", role: "assistant" },
+      parentId: "user-1",
+      type: "message",
     },
     {
-      type: 'compaction',
-      id: 'compaction-1',
-      parentId: 'assistant-2',
-      summary: 'Compacted context'
+      id: "compaction-1",
+      parentId: "assistant-2",
+      summary: "Compacted context",
+      type: "compaction",
     },
     {
-      type: 'message',
-      id: 'user-2',
-      parentId: 'compaction-1',
-      message: { role: 'user', content: 'new follow-up' }
-    }
-  ]
-  writeFileSync(sessionFile, entries.map(entry => JSON.stringify(entry)).join('\n'))
+      id: "user-2",
+      message: { content: "new follow-up", role: "user" },
+      parentId: "compaction-1",
+      type: "message",
+    },
+  ];
+  writeFileSync(
+    sessionFile,
+    entries.map((entry) => JSON.stringify(entry)).join("\n")
+  );
 
   assert.deepEqual(
-    activeSessionMessages(sessionFile).map(entry => entry.id),
-    ['user-1', 'assistant-2', 'user-2']
-  )
-})
+    activeSessionMessages(sessionFile).map((entry) => entry.id),
+    ["user-1", "assistant-2", "user-2"]
+  );
+});

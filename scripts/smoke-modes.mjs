@@ -1,57 +1,71 @@
-import { spawn } from 'node:child_process'
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 
-const cwd = process.cwd()
+const cwd = process.cwd();
 
-await new Promise((resolve, reject) => {
-  const p = spawn('npm', ['run', 'build'], { stdio: 'inherit', cwd })
-  p.on('exit', code => (code === 0 ? resolve() : reject(new Error(`build failed: ${code}`))))
-})
-
-const child = spawn('node', ['dist/index.js'], {
-  cwd,
-  stdio: ['pipe', 'pipe', 'inherit'],
-  env: process.env
-})
-
-child.stdout.setEncoding('utf8')
-child.stdout.on('data', chunk => process.stdout.write(chunk))
-
-function send(obj) {
-  child.stdin.write(JSON.stringify(obj) + '\n')
+const build = spawn("npm", ["run", "build"], { cwd, stdio: "inherit" });
+const [buildExitCode] = await once(build, "exit");
+if (buildExitCode !== 0) {
+  throw new Error(`build failed: ${buildExitCode}`);
 }
 
-let sessionId = null
-let buffer = ''
-child.stdout.on('data', chunk => {
-  buffer += chunk
-  const lines = buffer.split('\n')
-  buffer = lines.pop() ?? ''
+const child = spawn("node", ["dist/index.js"], {
+  cwd,
+  env: process.env,
+  stdio: ["pipe", "pipe", "inherit"],
+});
+
+child.stdout.setEncoding("utf-8");
+child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+
+const send = (obj) => {
+  child.stdin.write(`${JSON.stringify(obj)}\n`);
+};
+
+let sessionId = null;
+let buffer = "";
+child.stdout.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split("\n");
+  buffer = lines.pop() ?? "";
 
   for (const line of lines) {
-    if (!line.trim()) continue
-    let msg
+    if (!line.trim()) {
+      continue;
+    }
+    let msg;
     try {
-      msg = JSON.parse(line)
+      msg = JSON.parse(line);
     } catch {
-      continue
+      continue;
     }
 
     if (msg?.id === 2 && msg?.result?.sessionId && !sessionId) {
-      sessionId = msg.result.sessionId
+      ({ sessionId } = msg.result);
       // switch thinking level via ACP session/set_mode
       send({
-        jsonrpc: '2.0',
         id: 3,
-        method: 'session/set_mode',
-        params: { sessionId, modeId: 'low' }
-      })
+        jsonrpc: "2.0",
+        method: "session/set_mode",
+        params: { modeId: "low", sessionId },
+      });
     }
 
     if (msg?.id === 3) {
-      setTimeout(() => child.kill('SIGTERM'), 50)
+      setTimeout(() => child.kill("SIGTERM"), 50);
     }
   }
-})
+});
 
-send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1 } })
-send({ jsonrpc: '2.0', id: 2, method: 'session/new', params: { cwd, mcpServers: [] } })
+send({
+  id: 1,
+  jsonrpc: "2.0",
+  method: "initialize",
+  params: { protocolVersion: 1 },
+});
+send({
+  id: 2,
+  jsonrpc: "2.0",
+  method: "session/new",
+  params: { cwd, mcpServers: [] },
+});
