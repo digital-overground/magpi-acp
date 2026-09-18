@@ -382,8 +382,8 @@ export class MagPiAcpSession {
   private currentToolCalls = new Map<string, 'pending' | 'in_progress'>()
   private activeAskUser?: AskUserPrompt & { toolCallId: string }
 
-  // pi can emit multiple `turn_end` events for a single user prompt (e.g. after tool_use).
-  // The overall agent loop completes when `agent_end` is emitted.
+  // pi can emit multiple low-level runs for one user prompt (e.g. retries or compaction).
+  // The overall agent loop completes when `agent_settled` is emitted.
   private inAgentLoop = false
 
   // For ACP diff support: capture file contents before edit/write mutations,
@@ -593,14 +593,13 @@ export class MagPiAcpSession {
     })
 
     // Kick off pi, but completion is determined by pi events, not the RPC response.
-    // Important: pi may emit multiple `turn_end` events (e.g. when the model requests tools).
-    // The full prompt is finished when we see `agent_end`.
+    // Pi may emit multiple low-level runs; the full prompt ends at `agent_settled`.
     const prompt = t.clientMessageId
       ? this.proc.markClientMessage(t.clientMessageId).then(() => this.proc.prompt(t.message, t.images))
       : this.proc.prompt(t.message, t.images)
 
     prompt.catch(err => {
-      // If the subprocess errors before we get an `agent_end`, treat as error unless cancelled.
+      // If the subprocess errors before we get an `agent_settled`, treat as error unless cancelled.
       // Also ensure we flush any already-enqueued updates first.
       void this.flushEmits().finally(() => {
         // If this looks like an auth/config issue, surface AUTH_REQUIRED so clients can offer terminal login.
@@ -942,13 +941,13 @@ export class MagPiAcpSession {
         break
       }
 
-      case 'turn_end': {
-        // pi uses `turn_end` for sub-steps (e.g. tool_use) and will often start another turn.
-        // Do NOT resolve the ACP `session/prompt` here; wait for `agent_end`.
+      case 'turn_end':
+      case 'agent_end': {
+        // These end one low-level run. Pi may still retry, compact, or continue queued work.
         break
       }
 
-      case 'agent_end': {
+      case 'agent_settled': {
         // Ensure all updates derived from pi events are delivered before we resolve
         // the ACP `session/prompt` request.
         void this.sendUsageUpdate()

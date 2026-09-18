@@ -985,7 +985,7 @@ test('MagPiAcpSession: emits an ACP plan from todo extension results', async () 
   })
 })
 
-test('MagPiAcpSession: prompt resolves end_turn on agent_end', async () => {
+test('MagPiAcpSession: prompt remains pending through multiple agent_end events until agent_settled', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
@@ -998,12 +998,20 @@ test('MagPiAcpSession: prompt resolves end_turn on agent_end', async () => {
     fileCommands: []
   })
 
-  const p = session.prompt('hello')
+  let resolved = false
+  const prompt = session.prompt('hello').then(reason => {
+    resolved = true
+    return reason
+  })
   proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
   proc.emit({ type: 'agent_end' })
-  const reason = await p
-  assert.equal(reason, 'end_turn')
+  proc.emit({ type: 'agent_end' })
+  await new Promise(r => setTimeout(r, 0))
+  assert.equal(resolved, false)
+
+  proc.emit({ type: 'agent_settled' })
+  assert.equal(await prompt, 'end_turn')
 })
 
 test('MagPiAcpSession: emits ACP context usage and cost after a turn', async () => {
@@ -1025,6 +1033,7 @@ test('MagPiAcpSession: emits ACP context usage and cost after a turn', async () 
 
   const prompt = session.prompt('hello')
   proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
 
   assert.equal(await prompt, 'end_turn')
   assert.deepEqual(conn.updates.find(entry => entry.update.sessionUpdate === 'usage_update')?.update, {
@@ -1070,6 +1079,7 @@ test('MagPiAcpSession: does not re-emit startup info on first prompt after it wa
   proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
   proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
 
   const reason = await p
   assert.equal(reason, 'end_turn')
@@ -1093,13 +1103,14 @@ test('MagPiAcpSession: cancel flips stopReason to cancelled', async () => {
   proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
   proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
   const reason = await p
 
   assert.equal(proc.abortCount, 1)
   assert.equal(reason, 'cancelled')
 })
 
-test('MagPiAcpSession: queues concurrent prompt and starts it after agent_end', async () => {
+test('MagPiAcpSession: queues concurrent prompt and starts it after agent_settled', async () => {
   const conn = new FakeAgentSideConnection()
   const proc = new FakePiRpcProcess()
 
@@ -1121,7 +1132,10 @@ test('MagPiAcpSession: queues concurrent prompt and starts it after agent_end', 
   proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
   proc.emit({ type: 'agent_end' })
+  await new Promise(r => setTimeout(r, 0))
+  assert.equal(proc.prompts.length, 1)
 
+  proc.emit({ type: 'agent_settled' })
   const r1 = await first
   assert.equal(r1, 'end_turn')
 
@@ -1131,6 +1145,7 @@ test('MagPiAcpSession: queues concurrent prompt and starts it after agent_end', 
   proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
   proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
 
   const r2 = await second
   assert.equal(r2, 'end_turn')
@@ -1158,6 +1173,7 @@ test('MagPiAcpSession: cancel clears queued prompts', async () => {
   proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
   proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
 
   const r1 = await first
   const r2 = await second
@@ -1193,6 +1209,7 @@ test('MagPiAcpSession: expands /command before sending to pi', async () => {
   proc.emit({ type: 'agent_start' })
   proc.emit({ type: 'turn_end' })
   proc.emit({ type: 'agent_end' })
+  proc.emit({ type: 'agent_settled' })
 
   const reason = await p
   assert.equal(reason, 'end_turn')
