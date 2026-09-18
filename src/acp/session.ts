@@ -55,7 +55,7 @@ type QueuedTurn = {
 }
 
 type PermissionResponse = Awaited<ReturnType<AgentSideConnection['requestPermission']>>
-type ElicitationResponse = Awaited<ReturnType<AgentSideConnection['unstable_createElicitation']>>
+type ElicitationResponse = Awaited<ReturnType<AgentSideConnection['createElicitation']>>
 
 const CONFIRM_PERMISSION_OPTIONS: PermissionOption[] = [
   { optionId: 'yes', name: 'Yes', kind: 'allow_once' },
@@ -1157,7 +1157,7 @@ export class MagPiAcpSession {
     message?: string
   ): Promise<ElicitationResponse | null> {
     try {
-      return await this.conn.unstable_createElicitation({
+      return await this.conn.createElicitation({
         sessionId: this.sessionId,
         mode: 'form',
         message: message ?? stringProp(ev, 'title') ?? 'Pi requests input',
@@ -1249,8 +1249,10 @@ function stringProp(source: Record<string, unknown>, key: string): string | null
 }
 
 function elicitationString(response: ElicitationResponse, key: string): string | null {
-  if (response.action !== 'accept') return null
-  const value = response.content?.[key]
+  if (response.action !== 'accept' || !('content' in response)) return null
+  const content = response.content
+  if (!content || typeof content !== 'object') return null
+  const value = (content as Record<string, unknown>)[key]
   return typeof value === 'string' ? value : null
 }
 

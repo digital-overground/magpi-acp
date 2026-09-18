@@ -500,9 +500,9 @@ test('MagPiAcpSession: handles input and editor with ACP elicitation', async () 
   ])
 })
 
-test('MagPiAcpSession: cancels extension UI request when ACP elicitation is declined', async () => {
+test('MagPiAcpSession: cancels extension UI request when ACP elicitation is not accepted', async () => {
   const conn = new FakeAgentSideConnection()
-  conn.nextElicitationResponse = { action: 'decline' }
+  conn.nextElicitationResponse = { action: '_custom', content: { answer: 'not accepted' } }
   const proc = new FakePiRpcProcess()
 
   new MagPiAcpSession({
@@ -517,13 +517,13 @@ test('MagPiAcpSession: cancels extension UI request when ACP elicitation is decl
 
   proc.emit({
     type: 'extension_ui_request',
-    id: 'ui-declined',
+    id: 'ui-not-accepted',
     method: 'input',
     title: 'Enter name'
   })
   await new Promise(r => setTimeout(r, 0))
 
-  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-declined', cancelled: true }])
+  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-not-accepted', cancelled: true }])
 })
 
 test('MagPiAcpSession: cancels unsupported input and editor extension UI requests with visible fallback', async () => {
