@@ -1,23 +1,12 @@
 import type { PlanEntry } from "@agentclientprotocol/sdk";
 
-interface ToolResultRecord {
-  content?: unknown;
-  details?: unknown;
-  stdout?: unknown;
-  stderr?: unknown;
-  output?: unknown;
-  exitCode?: unknown;
-  code?: unknown;
-  diff?: unknown;
-}
+import { asRecord } from "../../unknown.js";
 
-const asToolResult = (value: unknown): ToolResultRecord | null | undefined =>
-  value as ToolResultRecord | null | undefined;
+const firstString = (...values: unknown[]): string | undefined =>
+  values.find((value): value is string => typeof value === "string");
 
-const firstValueOfType = <T>(
-  type: "string" | "number",
-  ...values: unknown[]
-): T | undefined => values.find((value) => typeof value === type) as T;
+const firstNumber = (...values: unknown[]): number | undefined =>
+  values.find((value): value is number => typeof value === "number");
 
 const contentText = (content: unknown): string | undefined => {
   if (!Array.isArray(content)) {
@@ -25,46 +14,43 @@ const contentText = (content: unknown): string | undefined => {
   }
   const text = content
     .map((item) => {
-      const block = item as { type?: unknown; text?: unknown } | null;
+      const block = asRecord(item);
       return block?.type === "text" && typeof block.text === "string"
         ? block.text
         : "";
     })
-    .filter(Boolean)
+    .filter((part) => part.length > 0)
     .join("");
-  return text || undefined;
+  return text.length > 0 ? text : undefined;
 };
 
 const processOutputText = (
-  record: ToolResultRecord | null | undefined,
-  details: ToolResultRecord | null | undefined
+  record: Record<string, unknown> | undefined,
+  details: Record<string, unknown> | undefined
 ): string | undefined => {
-  const stdout = firstValueOfType<string>(
-    "string",
+  const stdout = firstString(
     details?.stdout,
     record?.stdout,
     details?.output,
     record?.output
   );
-  const stderr = firstValueOfType<string>(
-    "string",
-    details?.stderr,
-    record?.stderr
-  );
-  if (!stdout?.trim() && !stderr?.trim()) {
+  const stderr = firstString(details?.stderr, record?.stderr);
+  if (
+    (stdout === undefined || stdout.trim().length === 0) &&
+    (stderr === undefined || stderr.trim().length === 0)
+  ) {
     return undefined;
   }
 
   const parts: string[] = [];
-  if (stdout?.trim()) {
+  if (stdout !== undefined && stdout.trim().length > 0) {
     parts.push(stdout);
   }
-  if (stderr?.trim()) {
+  if (stderr !== undefined && stderr.trim().length > 0) {
     parts.push(`stderr:\n${stderr}`);
   }
 
-  const exitCode = firstValueOfType<number>(
-    "number",
+  const exitCode = firstNumber(
     details?.exitCode,
     record?.exitCode,
     details?.code,
@@ -79,14 +65,12 @@ const processOutputText = (
 export const todoResultToPlanEntries = (
   result: unknown
 ): PlanEntry[] | undefined => {
-  const details = (
-    result as { details?: { tasks?: unknown; todos?: unknown } } | null
-  )?.details;
+  const details = asRecord(asRecord(result)?.details);
 
   if (Array.isArray(details?.tasks)) {
     const entries: PlanEntry[] = [];
     for (const task of details.tasks) {
-      const item = task as { subject?: unknown; status?: unknown } | null;
+      const item = asRecord(task);
       if (typeof item?.subject !== "string") {
         return undefined;
       }
@@ -116,7 +100,7 @@ export const todoResultToPlanEntries = (
   let hasActiveTodo = false;
   const entries: PlanEntry[] = [];
   for (const todo of details.todos) {
-    const item = todo as { text?: unknown; done?: unknown } | null;
+    const item = asRecord(todo);
     if (typeof item?.text !== "string" || typeof item.done !== "boolean") {
       return undefined;
     }
@@ -136,18 +120,18 @@ export const todoResultToPlanEntries = (
 };
 
 export const toolResultToText = (result: unknown): string => {
-  if (!result) {
+  if (result === null || result === undefined) {
     return "";
   }
 
-  const record = asToolResult(result);
-  const details = asToolResult(record?.details);
-  if (typeof details?.diff === "string" && details.diff.trim()) {
+  const record = asRecord(result);
+  const details = asRecord(record?.details);
+  if (typeof details?.diff === "string" && details.diff.trim().length > 0) {
     return details.diff;
   }
 
   const text = contentText(record?.content);
-  if (text) {
+  if (text !== undefined) {
     return text;
   }
 
@@ -157,8 +141,8 @@ export const toolResultToText = (result: unknown): string => {
   }
 
   try {
-    return JSON.stringify(result, null, 2);
+    return JSON.stringify(result, null, 2) ?? "";
   } catch {
-    return String(result);
+    return "";
   }
 };

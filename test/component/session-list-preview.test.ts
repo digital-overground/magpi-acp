@@ -8,7 +8,7 @@ import { MagPiAcpAgent } from "../../src/acp/agent.js";
 import { listPiSessions } from "../../src/acp/pi-sessions.js";
 import { asAgentConn, FakeAgentSideConnection } from "../helpers/fakes.js";
 
-test("listSessions includes a compact latest-user preview", async () => {
+void test("listSessions includes a compact latest-user preview", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-preview-"));
   const sessionsDir = path.join(root, "sessions", "--project--");
   mkdirSync(sessionsDir, { recursive: true });

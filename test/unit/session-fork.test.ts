@@ -2,24 +2,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SessionManager } from "../../src/acp/session.js";
-import { PiRpcProcess } from "../../src/pi-rpc/process.js";
+import {
+  FakeAgentSideConnection,
+  FakePiRpcProcess,
+  mockPiSpawn,
+} from "../helpers/fakes.js";
 
-test("SessionManager clones the current leaf using Pi-reported identity", async () => {
+void test("SessionManager clones the current leaf using Pi-reported identity", async () => {
   const calls: string[] = [];
-  const proc = {
-    clone() {
-      calls.push("clone");
-    },
-    dispose() {},
-    getState() {
-      return {
-        sessionFile: "/sessions/clone.jsonl",
-        sessionId: "clone-session",
-      };
-    },
+  const proc = new FakePiRpcProcess();
+  proc.clone = () => {
+    calls.push("clone");
   };
-  const originalSpawn = PiRpcProcess.spawn;
-  PiRpcProcess.spawn = () => Promise.resolve(proc as unknown as PiRpcProcess);
+  proc.getState = () => ({
+    sessionFile: "/sessions/clone.jsonl",
+    sessionId: "clone-session",
+  });
+  const restoreSpawn = mockPiSpawn(async () => {
+    await Promise.resolve();
+    return proc.process;
+  });
 
   try {
     assert.equal(
@@ -30,29 +32,30 @@ test("SessionManager clones the current leaf using Pi-reported identity", async 
       "clone-session"
     );
   } finally {
-    PiRpcProcess.spawn = originalSpawn;
+    restoreSpawn();
   }
 
   assert.deepEqual(calls, ["clone"]);
 });
 
-test("SessionManager validates and forks a native Pi user entry", async () => {
+void test("SessionManager validates and forks a native Pi user entry", async () => {
   const calls: string[] = [];
-  const proc = {
-    dispose() {},
-    fork(entryId: string) {
-      calls.push(`fork:${entryId}`);
-    },
-    getForkMessages() {
-      calls.push("get_fork_messages");
-      return [{ entryId: "user-1", text: "Fork here" }];
-    },
-    getState() {
-      return { sessionFile: "/sessions/fork.jsonl", sessionId: "fork-session" };
-    },
+  const proc = new FakePiRpcProcess();
+  proc.fork = (entryId) => {
+    calls.push(`fork:${entryId}`);
   };
-  const originalSpawn = PiRpcProcess.spawn;
-  PiRpcProcess.spawn = () => Promise.resolve(proc as unknown as PiRpcProcess);
+  proc.getForkMessages = () => {
+    calls.push("get_fork_messages");
+    return [{ entryId: "user-1", text: "Fork here" }];
+  };
+  proc.getState = () => ({
+    sessionFile: "/sessions/fork.jsonl",
+    sessionId: "fork-session",
+  });
+  const restoreSpawn = mockPiSpawn(async () => {
+    await Promise.resolve();
+    return proc.process;
+  });
 
   try {
     assert.equal(
@@ -64,54 +67,51 @@ test("SessionManager validates and forks a native Pi user entry", async () => {
       "fork-session"
     );
   } finally {
-    PiRpcProcess.spawn = originalSpawn;
+    restoreSpawn();
   }
 
   assert.deepEqual(calls, ["get_fork_messages", "fork:user-1"]);
 });
 
-test("SessionManager rejects a new session without a Pi-reported identity", async () => {
+void test("SessionManager rejects a new session without a Pi-reported identity", async () => {
+  const proc = new FakePiRpcProcess();
   let disposed = false;
-  const proc = {
-    dispose() {
-      disposed = true;
-    },
-    getState() {
-      return {};
-    },
+  proc.getState = () => ({});
+  proc.process.dispose = () => {
+    disposed = true;
   };
-  const originalSpawn = PiRpcProcess.spawn;
-  PiRpcProcess.spawn = () => Promise.resolve(proc as unknown as PiRpcProcess);
+  const restoreSpawn = mockPiSpawn(async () => {
+    await Promise.resolve();
+    return proc.process;
+  });
 
   try {
     await assert.rejects(
       new SessionManager().create({
-        conn: {} as never,
+        conn: new FakeAgentSideConnection(),
         cwd: "/workspace",
         mcpServers: [],
       }),
       { code: -32_603 }
     );
   } finally {
-    PiRpcProcess.spawn = originalSpawn;
+    restoreSpawn();
   }
 
   assert.equal(disposed, true);
 });
 
-test("SessionManager rejects entries absent from Pi native fork messages", async () => {
+void test("SessionManager rejects entries absent from Pi native fork messages", async () => {
+  const proc = new FakePiRpcProcess();
   let forked = false;
-  const proc = {
-    dispose() {},
-    fork() {
-      forked = true;
-    },
-    getForkMessages() {
-      return [{ entryId: "user-1", text: "Fork here" }];
-    },
+  proc.fork = () => {
+    forked = true;
   };
-  const originalSpawn = PiRpcProcess.spawn;
-  PiRpcProcess.spawn = () => Promise.resolve(proc as unknown as PiRpcProcess);
+  proc.getForkMessages = () => [{ entryId: "user-1", text: "Fork here" }];
+  const restoreSpawn = mockPiSpawn(async () => {
+    await Promise.resolve();
+    return proc.process;
+  });
 
   try {
     await assert.rejects(
@@ -123,7 +123,7 @@ test("SessionManager rejects entries absent from Pi native fork messages", async
       { code: -32_602 }
     );
   } finally {
-    PiRpcProcess.spawn = originalSpawn;
+    restoreSpawn();
   }
 
   assert.equal(forked, false);

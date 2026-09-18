@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MagPiAcpSession } from "../../src/acp/session.js";
-import type { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
 } from "../helpers/fakes.js";
 
-test("MagPiAcpSession: cancel clears queued prompts", async () => {
+void test("MagPiAcpSession: cancel clears queued prompts", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -17,7 +16,7 @@ test("MagPiAcpSession: cancel clears queued prompts", async () => {
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 

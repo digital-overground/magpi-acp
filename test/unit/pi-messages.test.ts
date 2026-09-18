@@ -6,11 +6,11 @@ import {
   normalizePiMessageText,
 } from "../../src/acp/translate/pi-messages.js";
 
-test("normalizePiMessageText: supports string", () => {
+void test("normalizePiMessageText: supports string", () => {
   assert.equal(normalizePiMessageText("hello"), "hello");
 });
 
-test("normalizePiMessageText: joins text blocks", () => {
+void test("normalizePiMessageText: joins text blocks", () => {
   assert.equal(
     normalizePiMessageText([
       { text: "a", type: "text" },
@@ -21,7 +21,7 @@ test("normalizePiMessageText: joins text blocks", () => {
   );
 });
 
-test("normalizePiAssistantText: joins only text blocks", () => {
+void test("normalizePiAssistantText: joins only text blocks", () => {
   assert.equal(
     normalizePiAssistantText([
       { text: "hi", type: "text" },

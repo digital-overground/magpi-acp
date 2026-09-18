@@ -1,32 +1,45 @@
 import { spawn } from "node:child_process";
 
+import {
+  chunkToString,
+  objectProperty,
+  parseJsonObject,
+  sendJson,
+} from "./smoke-helpers.mjs";
+
 const agent = spawn("node", ["dist/index.js"], {
   stdio: ["pipe", "pipe", "inherit"],
 });
 
 let buf = "";
-agent.stdout.on("data", (d) => {
-  buf += d.toString("utf-8");
-  let idx;
-  while ((idx = buf.indexOf("\n")) >= 0) {
-    const line = buf.slice(0, idx);
-    buf = buf.slice(idx + 1);
-    if (!line.trim()) {
-      continue;
-    }
-    try {
-      const msg = JSON.parse(line);
-      if (msg.method === "session/update") {
-        const up = msg.params?.update;
+agent.stdout.on(
+  "data",
+  /** @param {unknown} chunk - Subprocess output chunk. */
+  (chunk) => {
+    buf += chunkToString(chunk);
+    let idx;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+      if (!line.trim()) {
+        continue;
+      }
+      const msg = parseJsonObject(line);
+      if (msg?.method === "session/update") {
+        const params = objectProperty(msg, "params");
+        const update =
+          params === null ? null : objectProperty(params, "update");
+        const content =
+          update === null ? null : objectProperty(update, "content");
         if (
-          up?.sessionUpdate === "agent_message_chunk" &&
-          up?.content?.type === "text"
+          update?.sessionUpdate === "agent_message_chunk" &&
+          content?.type === "text"
         ) {
-          const t = String(up.content.text);
+          const text = String(content.text);
           if (
-            t.includes("[Context]") &&
-            t.includes("[Skills]") &&
-            t.includes("[Extensions]")
+            text.includes("[Context]") &&
+            text.includes("[Skills]") &&
+            text.includes("[Extensions]")
           ) {
             console.log("OK: got startup info in agent_message_chunk");
             agent.kill("SIGTERM");
@@ -34,14 +47,13 @@ agent.stdout.on("data", (d) => {
           }
         }
       }
-    } catch {
-      // ignore
     }
   }
-});
+);
 
-const send = (obj) => {
-  agent.stdin.write(`${JSON.stringify(obj)}\n`);
+/** @param {unknown} object - JSON-compatible request. */
+const send = (object) => {
+  sendJson(agent.stdin, object);
 };
 
 send({
@@ -68,22 +80,27 @@ setTimeout(() => {
 }, 200);
 
 // Replace dummy session id once we see session/new response
-agent.stdout.on("data", (d) => {
-  const s = d.toString("utf-8");
-  const match = s.match(
-    /"id":2,[^\n]*"result":\{[^}]*"sessionId":"(?<sessionId>[^"]+)"/u
-  );
-  const sid = match?.groups?.sessionId;
-  if (sid) {
-    // resend prompt with real session id
-    send({
-      id: 4,
-      jsonrpc: "2.0",
-      method: "session/prompt",
-      params: { prompt: [{ text: "hi", type: "text" }], sessionId: sid },
-    });
+agent.stdout.on(
+  "data",
+  /** @param {unknown} chunk - Subprocess output chunk. */
+  (chunk) => {
+    const text = chunkToString(chunk);
+    const match =
+      /"id":2,[^\n]*"result":\{[^}]*"sessionId":"(?<sessionId>[^"]+)"/u.exec(
+        text
+      );
+    const sid = match?.groups?.sessionId;
+    if (sid !== undefined) {
+      // resend prompt with real session id
+      send({
+        id: 4,
+        jsonrpc: "2.0",
+        method: "session/prompt",
+        params: { prompt: [{ text: "hi", type: "text" }], sessionId: sid },
+      });
+    }
   }
-});
+);
 
 setTimeout(() => {
   console.error("FAIL: did not observe startup info");

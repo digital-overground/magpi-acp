@@ -16,7 +16,7 @@ interface TreeCommand {
   handler: (args: string, context: TreeContext) => Promise<void>;
 }
 
-test("Pi tree extension only bridges a native entry ID to navigateTree without summarizing", async () => {
+void test("Pi tree extension only bridges a native entry ID to navigateTree without summarizing", async () => {
   const commands = new Map<string, TreeCommand>();
   registerMagPiAcpTree({
     registerCommand(name, command) {
@@ -29,13 +29,14 @@ test("Pi tree extension only bridges a native entry ID to navigateTree without s
   await commands
     .get(MAGPI_ACP_NAVIGATE_TREE_COMMAND)
     ?.handler("pi-assistant-1", {
-      navigateTree: (entryId: string, options: unknown) => {
+      navigateTree: async (entryId: string, options: unknown) => {
+        await Promise.resolve();
         calls.push({ entryId, options });
-        return Promise.resolve({ cancelled: false });
+        return { cancelled: false };
       },
-      waitForIdle: () => {
+      waitForIdle: async () => {
+        await Promise.resolve();
         calls.push("idle");
-        return Promise.resolve();
       },
     });
 
@@ -45,7 +46,7 @@ test("Pi tree extension only bridges a native entry ID to navigateTree without s
   ]);
 });
 
-test("Pi tree extension reports native cancellation", async () => {
+void test("Pi tree extension reports native cancellation", async () => {
   let command: TreeCommand | undefined;
   registerMagPiAcpTree({
     registerCommand(_name, registered) {
@@ -56,8 +57,13 @@ test("Pi tree extension reports native cancellation", async () => {
   assert.ok(command);
   await assert.rejects(
     command.handler("pi-user-1", {
-      navigateTree: () => Promise.resolve({ cancelled: true }),
-      waitForIdle: () => Promise.resolve(),
+      navigateTree: async () => {
+        await Promise.resolve();
+        return { cancelled: true };
+      },
+      waitForIdle: async () => {
+        await Promise.resolve();
+      },
     }),
     /cancelled tree navigation/iu
   );

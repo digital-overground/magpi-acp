@@ -6,19 +6,14 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { MagPiAcpSession } from "../../src/acp/session.js";
-import type { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
+  asArray,
+  asRecord,
 } from "../helpers/fakes.js";
-
-type UnknownRecord = Record<string, unknown>;
-
-const asRecord = (value: unknown): UnknownRecord => {
-  assert.ok(value !== null && typeof value === "object");
-  return value as UnknownRecord;
-};
+import type { UnknownRecord } from "../helpers/fakes.js";
 
 const createSession = (cwd: string) => {
   const conn = new FakeAgentSideConnection();
@@ -28,7 +23,7 @@ const createSession = (cwd: string) => {
     conn: asAgentConn(conn),
     cwd,
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -52,13 +47,15 @@ const completedDiff = (conn: FakeAgentSideConnection): UnknownRecord => {
   const message = completedToolUpdate(conn);
   assert.ok(message, "expected completed tool_call_update");
   const update = asRecord(message.update);
-  assert.ok(Array.isArray(update.content), "expected content array");
-  const diff = update.content.find((item) => asRecord(item).type === "diff");
-  assert.ok(diff, "expected diff content item");
+  const content = asArray(update.content);
+  const diff = content.find((item) => asRecord(item).type === "diff");
+  if (diff === undefined) {
+    throw new Error("Expected diff content item");
+  }
   return asRecord(diff);
 };
 
-test("MagPiAcpSession: emits ACP diff content for edit tool from actual before/after file contents", async () => {
+void test("MagPiAcpSession: emits ACP diff content for edit tool from actual before/after file contents", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, "a.txt");
@@ -96,7 +93,7 @@ test("MagPiAcpSession: emits ACP diff content for edit tool from actual before/a
   );
 });
 
-test("MagPiAcpSession: does not turn requested edit args into finalized ACP diffs at tool start", async () => {
+void test("MagPiAcpSession: does not turn requested edit args into finalized ACP diffs at tool start", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, "a.txt");
@@ -139,7 +136,7 @@ test("MagPiAcpSession: does not turn requested edit args into finalized ACP diff
   assert.equal(diff.newText, "after\n");
 });
 
-test("MagPiAcpSession: edit diff uses realized fuzzy-match file contents instead of requested args", async () => {
+void test("MagPiAcpSession: edit diff uses realized fuzzy-match file contents instead of requested args", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, "fuzzy.txt");
@@ -184,7 +181,7 @@ test("MagPiAcpSession: edit diff uses realized fuzzy-match file contents instead
   assert.equal(diff.newText, "FULLWIDTH: ascii replacement\n");
 });
 
-test("MagPiAcpSession: emits write diff content from actual before/after file contents on completion", async () => {
+void test("MagPiAcpSession: emits write diff content from actual before/after file contents on completion", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, "a.txt");
@@ -238,7 +235,7 @@ test("MagPiAcpSession: emits write diff content from actual before/after file co
   );
 });
 
-test("MagPiAcpSession: emits write diff content for new files on completion", async () => {
+void test("MagPiAcpSession: emits write diff content for new files on completion", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-diff-"));
   mkdirSync(dir, { recursive: true });
   const filePath = path.join(dir, "new.txt");

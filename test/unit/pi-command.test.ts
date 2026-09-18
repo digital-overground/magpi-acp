@@ -6,7 +6,7 @@ import {
   shouldUseShellForPiCommand,
 } from "../../src/pi-rpc/command.js";
 
-test("defaultPiCommand: uses pi.cmd on Windows and pi elsewhere", () => {
+void test("defaultPiCommand: uses pi.cmd on Windows and pi elsewhere", () => {
   const originalPlatform = process.platform;
 
   try {
@@ -20,7 +20,7 @@ test("defaultPiCommand: uses pi.cmd on Windows and pi elsewhere", () => {
   }
 });
 
-test("shouldUseShellForPiCommand: enables shell for Windows cmd launchers only", () => {
+void test("shouldUseShellForPiCommand: enables shell for Windows cmd launchers only", () => {
   const originalPlatform = process.platform;
   Object.defineProperty(process, "platform", { value: "win32" });
 
@@ -40,7 +40,7 @@ test("shouldUseShellForPiCommand: enables shell for Windows cmd launchers only",
   }
 });
 
-test("shouldUseShellForPiCommand: keeps shell disabled on non-Windows", () => {
+void test("shouldUseShellForPiCommand: keeps shell disabled on non-Windows", () => {
   const originalPlatform = process.platform;
   Object.defineProperty(process, "platform", { value: "darwin" });
 

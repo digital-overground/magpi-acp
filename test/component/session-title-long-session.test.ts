@@ -8,7 +8,7 @@ import { listPiSessions } from "../../src/acp/pi-sessions.js";
 
 // Ensures we still pick up session_info.name even if it is older than the tail window.
 
-test("listPiSessions: finds session_info.name even when it is outside the tail window", () => {
+void test("listPiSessions: finds session_info.name even when it is outside the tail window", () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-test-"));
   const sessionsDir = path.join(root, "sessions", "--p--");
   mkdirSync(sessionsDir, { recursive: true });

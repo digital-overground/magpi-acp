@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+import { asRecord } from "../unknown.js";
+
 interface SessionEntry {
   id?: unknown;
   parentId?: unknown;
@@ -38,17 +40,23 @@ export const activeSessionMessages = (
     }
 
     try {
-      const entry = JSON.parse(line) as SessionEntry;
-      if (typeof entry.id !== "string") {
+      const entry = asRecord(JSON.parse(line) as unknown);
+      if (typeof entry?.id !== "string") {
         continue;
       }
       if (entry.parentId !== null && typeof entry.parentId !== "string") {
         continue;
       }
 
-      const normalized = entry as SessionEntry & {
+      const message = asRecord(entry.message);
+      const normalized: SessionEntry & {
         id: string;
         parentId: string | null;
+      } = {
+        ...entry,
+        id: entry.id,
+        parentId: entry.parentId,
+        ...(message === undefined ? {} : { message }),
       };
       entries.push(normalized);
       entriesById.set(normalized.id, normalized);

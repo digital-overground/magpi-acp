@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { toolResultToText } from "../../src/acp/translate/pi-tools.js";
 
-test("toolResultToText: extracts text from content blocks", () => {
+void test("toolResultToText: extracts text from content blocks", () => {
   const text = toolResultToText({
     content: [
       { text: "hello", type: "text" },
@@ -13,7 +13,7 @@ test("toolResultToText: extracts text from content blocks", () => {
   assert.equal(text, "hello world");
 });
 
-test("toolResultToText: prefers details.diff when present", () => {
+void test("toolResultToText: prefers details.diff when present", () => {
   const text = toolResultToText({
     content: [
       { text: "Successfully replaced 2 block(s) in a.txt.", type: "text" },
@@ -23,12 +23,12 @@ test("toolResultToText: prefers details.diff when present", () => {
   assert.equal(text, "--- a\n+++ b\n");
 });
 
-test("toolResultToText: falls back to JSON", () => {
+void test("toolResultToText: falls back to JSON", () => {
   const text = toolResultToText({ a: 1 });
   assert.match(text, /"a": 1/u);
 });
 
-test("toolResultToText: extracts bash stdout/stderr from details", () => {
+void test("toolResultToText: extracts bash stdout/stderr from details", () => {
   const text = toolResultToText({
     details: {
       exitCode: 0,

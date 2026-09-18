@@ -5,7 +5,7 @@ export const parseCommandArgs = (argsString: string): string[] => {
   let inQuote: string | null = null;
 
   for (const ch of argsString) {
-    if (inQuote) {
+    if (inQuote !== null) {
       if (ch === inQuote) {
         inQuote = null;
       } else {
@@ -14,7 +14,7 @@ export const parseCommandArgs = (argsString: string): string[] => {
     } else if (ch === '"' || ch === "'") {
       inQuote = ch;
     } else if (ch === " " || ch === "\t") {
-      if (current) {
+      if (current.length > 0) {
         args.push(current);
         current = "";
       }
@@ -23,7 +23,7 @@ export const parseCommandArgs = (argsString: string): string[] => {
     }
   }
 
-  if (current) {
+  if (current.length > 0) {
     args.push(current);
   }
   return args;

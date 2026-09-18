@@ -6,21 +6,15 @@ import test from "node:test";
 
 import { MagPiAcpAgent } from "../../src/acp/agent.js";
 import { activeSessionMessages } from "../../src/acp/pi-session-tree.js";
-import { PiRpcProcess } from "../../src/pi-rpc/process.js";
-import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
+import {
+  FakeAgentSideConnection,
+  FakePiRpcProcess,
+  asAgentConn,
+  asRecord,
+  mockPiSpawn,
+} from "../helpers/fakes.js";
 
-type UnknownRecord = Record<string, unknown>;
-
-const asRecord = (value: unknown): UnknownRecord => {
-  assert.ok(value !== null && typeof value === "object");
-  return value as UnknownRecord;
-};
-
-const processClass = PiRpcProcess as unknown as {
-  spawn: typeof PiRpcProcess.spawn;
-};
-
-test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays history", async () => {
+void test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays history", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-test-"));
   const sessionsDir = path.join(root, "sessions", "--tmp--project--");
   const sessionFile = path.join(
@@ -107,26 +101,24 @@ test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     assert.equal(session.cwd, "/tmp/project");
     assert.equal(session.title, "My Named Session");
 
-    const originalSpawn = PiRpcProcess.spawn;
-
-    processClass.spawn = (params) => {
-      assert.equal(typeof params.sessionPath, "string");
+    const proc = new FakePiRpcProcess();
+    proc.availableModels = { models: [] };
+    proc.messages = {
+      messages: [{ content: "Only the compacted context", role: "user" }],
+    };
+    proc.state = { thinkingLevel: "medium" };
+    const restoreSpawn = mockPiSpawn(async (params) => {
+      await Promise.resolve();
+      if (typeof params.sessionPath !== "string") {
+        throw new TypeError("Expected a session path");
+      }
       assert.ok(
-        params.sessionPath?.endsWith(
+        params.sessionPath.endsWith(
           "/0000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jsonl"
         )
       );
-
-      return Promise.resolve({
-        getAvailableModels: () => Promise.resolve({ models: [] }),
-        getMessages: () =>
-          Promise.resolve({
-            messages: [{ content: "Only the compacted context", role: "user" }],
-          }),
-        getState: () => Promise.resolve({ thinkingLevel: "medium" }),
-        onEvent: () => () => {},
-      } as unknown as PiRpcProcess);
-    };
+      return proc.process;
+    });
 
     try {
       await agent.loadSession({
@@ -138,7 +130,11 @@ test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
       const texts = conn.updates.map((message) => {
         const update = asRecord(message.update);
         const content =
-          update.content === undefined ? undefined : asRecord(update.content);
+          typeof update.content === "object" &&
+          update.content !== null &&
+          !Array.isArray(update.content)
+            ? asRecord(update.content)
+            : undefined;
         return {
           kind: update.sessionUpdate,
           messageId: update.messageId,
@@ -177,7 +173,7 @@ test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
         }
       );
     } finally {
-      processClass.spawn = originalSpawn;
+      restoreSpawn();
     }
   } finally {
     if (oldEnv === undefined) {

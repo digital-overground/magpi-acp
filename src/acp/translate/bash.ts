@@ -1,24 +1,6 @@
 import type { ToolCallContent } from "@agentclientprotocol/sdk";
 
-interface BashCommandRecord {
-  command?: unknown;
-  cmd?: unknown;
-  args?: BashCommandRecord;
-  input?: BashCommandRecord;
-  rawInput?: BashCommandRecord;
-  toolInput?: BashCommandRecord;
-  details?: BashCommandRecord;
-}
-
-interface BashResultRecord {
-  content?: unknown;
-  details?: unknown;
-  stdout?: unknown;
-  stderr?: unknown;
-  output?: unknown;
-  exitCode?: unknown;
-  code?: unknown;
-}
+import { asRecord } from "../../unknown.js";
 
 const firstString = (...values: unknown[]): string | undefined =>
   values.find((value): value is string => typeof value === "string");
@@ -27,18 +9,18 @@ export const isBashTool = (toolName: string): boolean =>
   toolName.toLowerCase() === "bash";
 
 export const bashCommand = (value: unknown): string | undefined => {
-  const record = value as BashCommandRecord | null | undefined;
+  const record = asRecord(value);
   const nested = [
     record,
-    record?.args,
-    record?.input,
-    record?.rawInput,
-    record?.toolInput,
-    record?.details,
+    asRecord(record?.args),
+    asRecord(record?.input),
+    asRecord(record?.rawInput),
+    asRecord(record?.toolInput),
+    asRecord(record?.details),
   ];
   for (const candidate of nested) {
     const command = firstString(candidate?.command, candidate?.cmd);
-    if (command?.trim()) {
+    if (command !== undefined && command.trim().length > 0) {
       return command;
     }
   }
@@ -46,23 +28,23 @@ export const bashCommand = (value: unknown): string | undefined => {
 };
 
 export const bashResultText = (result: unknown): string => {
-  const record = result as BashResultRecord | null | undefined;
+  const record = asRecord(result);
   const content = record?.content;
   if (Array.isArray(content)) {
     const texts = content
       .map((item) => {
-        const block = item as { type?: unknown; text?: unknown };
-        return block.type === "text" && typeof block.text === "string"
+        const block = asRecord(item);
+        return block?.type === "text" && typeof block.text === "string"
           ? block.text
           : "";
       })
-      .filter(Boolean);
-    if (texts.length) {
+      .filter((text) => text.length > 0);
+    if (texts.length > 0) {
       return texts.join("");
     }
   }
 
-  const details = record?.details as BashResultRecord | null | undefined;
+  const details = asRecord(record?.details);
   const stdout = firstString(
     details?.stdout,
     record?.stdout,
@@ -79,8 +61,8 @@ export const bashResultText = (result: unknown): string => {
 };
 
 export const bashExitCode = (result: unknown, isError: boolean): number => {
-  const record = result as BashResultRecord | null | undefined;
-  const details = record?.details as BashResultRecord | null | undefined;
+  const record = asRecord(result);
+  const details = asRecord(record?.details);
   const exitCode = [
     details?.exitCode,
     record?.exitCode,

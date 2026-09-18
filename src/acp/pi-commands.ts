@@ -1,6 +1,7 @@
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
 
 import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from "../pi-rpc/tree-command.js";
+import { asRecord } from "../unknown.js";
 
 export interface PiRpcCommandInfo {
   name?: unknown;
@@ -26,16 +27,15 @@ const describeFallback = (c: PiRpcCommandInfo): string => {
 };
 
 const commandList = (data: unknown): PiRpcCommandInfo[] => {
-  const root = data as {
-    commands?: unknown;
-    data?: { commands?: unknown };
-  } | null;
+  const root = asRecord(data);
+  const nested = asRecord(root?.data);
+  let commands: unknown[] = [];
   if (Array.isArray(root?.commands)) {
-    return root.commands as PiRpcCommandInfo[];
+    ({ commands } = root);
+  } else if (Array.isArray(nested?.commands)) {
+    ({ commands } = nested);
   }
-  return Array.isArray(root?.data?.commands)
-    ? (root.data.commands as PiRpcCommandInfo[])
-    : [];
+  return commands.map((command) => asRecord(command) ?? {});
 };
 
 export const toAvailableCommandsFromPiGetCommands = (

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { promptToPiMessage } from "../../src/acp/translate/prompt.js";
 
-test("promptToPiMessage: concatenates text and resource links", () => {
+void test("promptToPiMessage: concatenates text and resource links", () => {
   const { message, images } = promptToPiMessage([
     { text: "Hello", type: "text" },
     { name: "foo", type: "resource_link", uri: "file:///tmp/foo.txt" },
@@ -14,7 +14,7 @@ test("promptToPiMessage: concatenates text and resource links", () => {
   assert.deepEqual(images, []);
 });
 
-test("promptToPiMessage: includes embedded resource text as marker", () => {
+void test("promptToPiMessage: includes embedded resource text as marker", () => {
   const { message, images } = promptToPiMessage([
     {
       resource: {
@@ -24,7 +24,7 @@ test("promptToPiMessage: includes embedded resource text as marker", () => {
       },
       type: "resource",
     },
-  ] as never);
+  ]);
 
   assert.equal(
     message,
@@ -33,7 +33,7 @@ test("promptToPiMessage: includes embedded resource text as marker", () => {
   assert.deepEqual(images, []);
 });
 
-test("promptToPiMessage: includes embedded resource blob as marker", () => {
+void test("promptToPiMessage: includes embedded resource blob as marker", () => {
   const blob = Buffer.from("xyz", "utf-8").toString("base64");
 
   const { message, images } = promptToPiMessage([
@@ -45,7 +45,7 @@ test("promptToPiMessage: includes embedded resource blob as marker", () => {
       },
       type: "resource",
     },
-  ] as never);
+  ]);
 
   assert.equal(
     message,
@@ -54,12 +54,12 @@ test("promptToPiMessage: includes embedded resource blob as marker", () => {
   assert.deepEqual(images, []);
 });
 
-test("promptToPiMessage: includes audio as marker", () => {
+void test("promptToPiMessage: includes audio as marker", () => {
   const data = Buffer.from("abc", "utf-8").toString("base64");
 
   const { message, images } = promptToPiMessage([
     { data, mimeType: "audio/wav", type: "audio" },
-  ] as never);
+  ]);
 
   assert.equal(
     message,
@@ -68,7 +68,7 @@ test("promptToPiMessage: includes audio as marker", () => {
   assert.deepEqual(images, []);
 });
 
-test("promptToPiMessage: maps image to pi image content", () => {
+void test("promptToPiMessage: maps image to pi image content", () => {
   const base64 = Buffer.from("abc", "utf-8").toString("base64");
 
   const { message, images } = promptToPiMessage([

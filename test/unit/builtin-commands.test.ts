@@ -13,14 +13,9 @@ import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
+  asRecord,
+  replaceProperty,
 } from "../helpers/fakes.js";
-
-type UnknownRecord = Record<string, unknown>;
-
-const asRecord = (value: unknown): UnknownRecord => {
-  assert.ok(value !== null && typeof value === "object");
-  return value as UnknownRecord;
-};
 
 class FakeSessions {
   forkParams: unknown;
@@ -38,20 +33,21 @@ class FakeSessions {
     return this.session;
   }
 
-  fork(params: unknown): Promise<string> {
+  async fork(params: unknown): Promise<string> {
+    await Promise.resolve();
     this.forkParams = params;
-    return Promise.resolve("forked-session");
+    return "forked-session";
   }
 }
 
 const setSessions = (agent: MagPiAcpAgent, sessions: FakeSessions): void => {
-  (agent as unknown as { sessions: unknown }).sessions = sessions;
+  replaceProperty(agent, "sessions", sessions);
 };
 
-test("MagPiAcpAgent: /steering is handled adapter-side", async () => {
+void test("MagPiAcpAgent: /steering is handled adapter-side", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
-  proc.getState = () => Promise.resolve({ steeringMode: "one-at-a-time" });
+  proc.getState = () => ({ steeringMode: "one-at-a-time" });
 
   const agent = new MagPiAcpAgent(asAgentConn(conn));
   setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
@@ -67,7 +63,7 @@ test("MagPiAcpAgent: /steering is handled adapter-side", async () => {
   assert.match(String(content.text), /Steering mode: one-at-a-time/u);
 });
 
-test("MagPiAcpAgent: /name sets session display name adapter-side", async () => {
+void test("MagPiAcpAgent: /name sets session display name adapter-side", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -96,13 +92,12 @@ test("MagPiAcpAgent: /name sets session display name adapter-side", async () => 
   assert.match(String(content.text), /Session name set: My Session/u);
 });
 
-test("MagPiAcpAgent: leaves automatic thread naming to the client", async () => {
+void test("MagPiAcpAgent: leaves automatic thread naming to the client", async () => {
   const proc = new FakePiRpcProcess();
   let generated = false;
   let named = false;
-  proc.getState = () =>
-    Promise.resolve({ model: { id: "model", provider: "test" } });
-  proc.getMessages = () => Promise.resolve({ messages: [] });
+  proc.getState = () => ({ model: { id: "model", provider: "test" } });
+  proc.getMessages = () => ({ messages: [] });
   proc.setSessionName = () => {
     named = true;
   };
@@ -110,17 +105,20 @@ test("MagPiAcpAgent: leaves automatic thread naming to the client", async () => 
   const session = {
     cwd: process.cwd(),
     proc,
-    prompt: () => Promise.resolve<"end_turn">("end_turn"),
+    prompt: async (): Promise<"end_turn"> => {
+      await Promise.resolve();
+      return "end_turn";
+    },
     sessionId: "s1",
     wasCancelRequested: () => false,
   };
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
   setSessions(agent, new FakeSessions(session));
-  (agent as unknown as { generateTitle: () => Promise<string> }).generateTitle =
-    () => {
-      generated = true;
-      return Promise.resolve("Fix Login Cache Bug");
-    };
+  replaceProperty(agent, "generateTitle", async () => {
+    await Promise.resolve();
+    generated = true;
+    return "Fix Login Cache Bug";
+  });
 
   await agent.prompt({
     prompt: [{ text: "fix the login caching bug", type: "text" }],
@@ -132,11 +130,10 @@ test("MagPiAcpAgent: leaves automatic thread naming to the client", async () => 
   assert.equal(named, false);
 });
 
-test("MagPiAcpAgent: standard fork clones the current Pi leaf without metadata", async () => {
+void test("MagPiAcpAgent: standard fork clones the current Pi leaf without metadata", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
-  proc.getState = () =>
-    Promise.resolve({ sessionFile: "/sessions/source.jsonl" });
+  proc.getState = () => ({ sessionFile: "/sessions/source.jsonl" });
   const sessions = new FakeSessions({ proc, sessionId: "s1" });
   const agent = new MagPiAcpAgent(asAgentConn(conn));
   setSessions(agent, sessions);
@@ -156,10 +153,9 @@ test("MagPiAcpAgent: standard fork clones the current Pi leaf without metadata",
   });
 });
 
-test("MagPiAcpAgent: targeted fork passes a native Pi entry ID", async () => {
+void test("MagPiAcpAgent: targeted fork passes a native Pi entry ID", async () => {
   const proc = new FakePiRpcProcess();
-  proc.getState = () =>
-    Promise.resolve({ sessionFile: "/sessions/source.jsonl" });
+  proc.getState = () => ({ sessionFile: "/sessions/source.jsonl" });
   const sessions = new FakeSessions({ proc, sessionId: "s1" });
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
   setSessions(agent, sessions);
@@ -179,10 +175,10 @@ test("MagPiAcpAgent: targeted fork passes a native Pi entry ID", async () => {
   });
 });
 
-test("MagPiAcpAgent: fork picker returns Pi native fork messages unchanged", async () => {
+void test("MagPiAcpAgent: fork picker returns Pi native fork messages unchanged", async () => {
   const proc = new FakePiRpcProcess();
   const messages = [{ entryId: "pi-user-1", text: "Fix login" }];
-  proc.getForkMessages = () => Promise.resolve(messages);
+  proc.getForkMessages = () => messages;
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
   setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
@@ -192,10 +188,10 @@ test("MagPiAcpAgent: fork picker returns Pi native fork messages unchanged", asy
   );
 });
 
-test("MagPiAcpAgent: tree picker returns Pi native tree and leaf unchanged", async () => {
+void test("MagPiAcpAgent: tree picker returns Pi native tree and leaf unchanged", async () => {
   const proc = new FakePiRpcProcess();
   const tree = [{ children: [], entry: { id: "pi-user-1", type: "message" } }];
-  proc.getTree = () => Promise.resolve({ leafId: "pi-user-1", tree });
+  proc.getTree = () => ({ leafId: "pi-user-1", tree });
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
   setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
@@ -208,7 +204,7 @@ test("MagPiAcpAgent: tree picker returns Pi native tree and leaf unchanged", asy
   );
 });
 
-test("MagPiAcpAgent: tree navigation uses a native message ID and keeps the session identity", async () => {
+void test("MagPiAcpAgent: tree navigation uses a native message ID and keeps the session identity", async () => {
   const proc = new FakePiRpcProcess();
   const navigations: string[] = [];
   const tree = [
@@ -221,16 +217,14 @@ test("MagPiAcpAgent: tree navigation uses a native message ID and keeps the sess
       },
     },
   ];
-  proc.getTree = () =>
-    Promise.resolve({
-      leafId: navigations.length ? "pi-user-1" : "pi-assistant-2",
-      tree,
-    });
-  proc.getState = () =>
-    Promise.resolve({
-      sessionFile: "/sessions/source.jsonl",
-      sessionId: "s1",
-    });
+  proc.getTree = () => ({
+    leafId: navigations.length > 0 ? "pi-user-1" : "pi-assistant-2",
+    tree,
+  });
+  proc.getState = () => ({
+    sessionFile: "/sessions/source.jsonl",
+    sessionId: "s1",
+  });
   proc.navigateTree = (entryId: string) => {
     navigations.push(entryId);
   };
@@ -247,15 +241,12 @@ test("MagPiAcpAgent: tree navigation uses a native message ID and keeps the sess
   assert.deepEqual(navigations, ["pi-user-1"]);
 });
 
-test("MagPiAcpAgent: tree navigation rejects non-message and stale entry IDs", async () => {
+void test("MagPiAcpAgent: tree navigation rejects non-message and stale entry IDs", async () => {
   const proc = new FakePiRpcProcess();
-  proc.getTree = () =>
-    Promise.resolve({
-      leafId: "compaction-1",
-      tree: [
-        { children: [], entry: { id: "compaction-1", type: "compaction" } },
-      ],
-    });
+  proc.getTree = () => ({
+    leafId: "compaction-1",
+    tree: [{ children: [], entry: { id: "compaction-1", type: "compaction" } }],
+  });
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
   setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 

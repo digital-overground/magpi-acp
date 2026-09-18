@@ -9,6 +9,13 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+import {
+  hasMessageId,
+  parseJsonObject,
+  responseSessionId,
+  sendJson,
+} from "./smoke-helpers.mjs";
+
 const spawnAgent = () => {
   const proc = spawn("node", ["dist/index.js"], {
     stdio: ["pipe", "pipe", "inherit"],
@@ -20,28 +27,35 @@ const spawnAgent = () => {
       proc.kill("SIGTERM");
     },
     proc,
-    send(obj) {
-      proc.stdin.write(`${JSON.stringify(obj)}\n`);
+    /** @param {unknown} object - JSON-compatible request. */
+    send(object) {
+      sendJson(proc.stdin, object);
     },
   };
 };
 
+/** @typedef {ReturnType<typeof spawnAgent>} SmokeAgent */
+
+/**
+ * @param {SmokeAgent} agent - Running smoke-test agent.
+ * @yields {Record<string, unknown>} Parsed JSON-RPC messages.
+ */
 const messagesFrom = async function* messagesFrom(agent) {
   const lines = createInterface({ input: agent.proc.stdout });
   for await (const line of lines) {
     if (!line.trim()) {
       continue;
     }
-    try {
-      yield JSON.parse(line);
-    } catch {
-      // Ignore non-JSON output.
+    const message = parseJsonObject(line);
+    if (message !== null) {
+      yield message;
     }
   }
 };
 
 const createAndPrompt = async () => {
   const agent = spawnAgent();
+  /** @type {string | null} */
   let sessionId = null;
 
   agent.send({
@@ -58,8 +72,11 @@ const createAndPrompt = async () => {
   });
 
   for await (const message of messagesFrom(agent)) {
-    if (message?.id === 2 && message?.result?.sessionId) {
-      ({ sessionId } = message.result);
+    const newSessionId = hasMessageId(message, 2)
+      ? responseSessionId(message)
+      : null;
+    if (newSessionId !== null) {
+      sessionId = newSessionId;
       agent.send({
         id: 3,
         jsonrpc: "2.0",
@@ -71,9 +88,9 @@ const createAndPrompt = async () => {
       });
     }
 
-    if (message?.id === 3) {
+    if (hasMessageId(message, 3)) {
       agent.kill();
-      if (sessionId) {
+      if (sessionId !== null) {
         return sessionId;
       }
       throw new Error("No sessionId");
@@ -83,6 +100,7 @@ const createAndPrompt = async () => {
   throw new Error("Agent exited before creating and prompting a session");
 };
 
+/** @param {string} sessionId - Session to load. */
 const loadAndCountReplay = async (sessionId) => {
   const agent = spawnAgent();
   let updates = 0;
@@ -101,12 +119,12 @@ const loadAndCountReplay = async (sessionId) => {
   });
 
   for await (const message of messagesFrom(agent)) {
-    if (message?.method === "session/update") {
+    if (message.method === "session/update") {
       updates += 1;
     }
 
-    if (message?.id === 2) {
-      if (message?.result !== null) {
+    if (hasMessageId(message, 2)) {
+      if (message.result !== null) {
         throw new Error("Expected session/load result to be null");
       }
       agent.kill();

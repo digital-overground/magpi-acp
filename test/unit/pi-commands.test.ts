@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { toAvailableCommandsFromPiGetCommands } from "../../src/acp/pi-commands.js";
 
-test("toAvailableCommandsFromPiGetCommands: exposes Pi extension, skill, and prompt commands", () => {
+void test("toAvailableCommandsFromPiGetCommands: exposes Pi extension, skill, and prompt commands", () => {
   const data = {
     commands: [
       { description: "X", name: "x", source: "extension" },

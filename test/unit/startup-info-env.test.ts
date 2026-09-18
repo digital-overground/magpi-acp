@@ -5,7 +5,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { MagPiAcpAgent } from "../../src/acp/agent.js";
-import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
+import {
+  FakeAgentSideConnection,
+  asAgentConn,
+  replaceProperty,
+} from "../helpers/fakes.js";
 
 class FakeSessions {
   private readonly session: unknown;
@@ -14,8 +18,9 @@ class FakeSessions {
     this.session = session;
   }
 
-  create(_params: unknown): Promise<unknown> {
-    return Promise.resolve(this.session);
+  async create(_params: unknown): Promise<unknown> {
+    await Promise.resolve();
+    return this.session;
   }
 
   closeAllExcept = (_sessionId: string): void => {
@@ -24,14 +29,10 @@ class FakeSessions {
 }
 
 const setSessions = (agent: MagPiAcpAgent, sessions: FakeSessions): void => {
-  (agent as unknown as { sessions: unknown }).sessions = sessions;
+  replaceProperty(agent, "sessions", sessions);
 };
 
-const timeoutOwner = globalThis as unknown as {
-  setTimeout: typeof globalThis.setTimeout;
-};
-
-test("MagPiAcpAgent: startup message shows versions and tagline", async () => {
+void test("MagPiAcpAgent: startup message shows versions and tagline", async () => {
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const previousPiCommand = process.env.MAGPI_ACP_PI_COMMAND;
   process.env.PI_CODING_AGENT_DIR = mkdtempSync(
@@ -40,23 +41,26 @@ test("MagPiAcpAgent: startup message shows versions and tagline", async () => {
   process.env.MAGPI_ACP_PI_COMMAND = process.execPath;
 
   const realSetTimeout = globalThis.setTimeout;
-  timeoutOwner.setTimeout = (() =>
-    0) as unknown as typeof globalThis.setTimeout;
+  replaceProperty(globalThis, "setTimeout", () => 0);
 
   try {
     const conn = new FakeAgentSideConnection();
     let startupInfo = "";
     const session = {
       proc: {
-        getAvailableModels: () =>
-          Promise.resolve({
+        getAvailableModels: async () => {
+          await Promise.resolve();
+          return {
             models: [{ id: "model", name: "model", provider: "test" }],
-          }),
-        getState: () =>
-          Promise.resolve({
+          };
+        },
+        getState: async () => {
+          await Promise.resolve();
+          return {
             model: { id: "model", provider: "test" },
             thinkingLevel: "medium",
-          }),
+          };
+        },
       },
       sendStartupInfoIfPending() {},
       sendUsageUpdate() {},
@@ -81,7 +85,7 @@ test("MagPiAcpAgent: startup message shows versions and tagline", async () => {
     );
     assert.doesNotMatch(startupInfo, /```/u);
   } finally {
-    timeoutOwner.setTimeout = realSetTimeout;
+    replaceProperty(globalThis, "setTimeout", realSetTimeout);
     if (previousAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {
@@ -95,7 +99,7 @@ test("MagPiAcpAgent: startup message shows versions and tagline", async () => {
   }
 });
 
-test("MagPiAcpAgent: quietStartup=true disables startup info generation/emission", async () => {
+void test("MagPiAcpAgent: quietStartup=true disables startup info generation/emission", async () => {
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
   const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-quietstartup-"));
@@ -108,10 +112,10 @@ test("MagPiAcpAgent: quietStartup=true disables startup info generation/emission
 
   const realSetTimeout = globalThis.setTimeout;
   const timeouts: unknown[] = [];
-  timeoutOwner.setTimeout = ((scheduledTask: unknown) => {
+  replaceProperty(globalThis, "setTimeout", (scheduledTask: unknown) => {
     timeouts.push(scheduledTask);
     return 0;
-  }) as unknown as typeof globalThis.setTimeout;
+  });
 
   try {
     const conn = new FakeAgentSideConnection();
@@ -120,15 +124,19 @@ test("MagPiAcpAgent: quietStartup=true disables startup info generation/emission
     const session = {
       cwd: process.cwd(),
       proc: {
-        getAvailableModels: () =>
-          Promise.resolve({
+        getAvailableModels: async () => {
+          await Promise.resolve();
+          return {
             models: [{ id: "model", name: "model", provider: "test" }],
-          }),
-        getState: () =>
-          Promise.resolve({
+          };
+        },
+        getState: async () => {
+          await Promise.resolve();
+          return {
             model: { id: "model", provider: "test" },
             thinkingLevel: "medium",
-          }),
+          };
+        },
       },
       sendStartupInfoIfPending() {},
       sessionId: "s1",
@@ -152,7 +160,7 @@ test("MagPiAcpAgent: quietStartup=true disables startup info generation/emission
     }
     assert.equal(timeouts.length, 2);
   } finally {
-    timeoutOwner.setTimeout = realSetTimeout;
+    replaceProperty(globalThis, "setTimeout", realSetTimeout);
     if (previousAgentDir === undefined) {
       delete process.env.PI_CODING_AGENT_DIR;
     } else {

@@ -22,28 +22,28 @@ const initializeWithEmbeddedContext = async (value?: string) => {
   }
 
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-  const res = await agent.initialize({ protocolVersion: 1 } as never);
+  const res = await agent.initialize({ protocolVersion: 1 });
 
   assert.ok(res.agentCapabilities);
   assert.ok(res.agentCapabilities.promptCapabilities);
   return res.agentCapabilities.promptCapabilities.embeddedContext;
 };
 
-test("MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: defaults embeddedContext to false when undefined", async () => {
+void test("MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: defaults embeddedContext to false when undefined", async () => {
   assert.equal(await initializeWithEmbeddedContext(), false);
 });
 
-test("MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: 'false' keeps embeddedContext disabled", async () => {
+void test("MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: 'false' keeps embeddedContext disabled", async () => {
   assert.equal(await initializeWithEmbeddedContext("false"), false);
 });
 
-test("MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: 'true' enables embeddedContext", async () => {
+void test("MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: 'true' enables embeddedContext", async () => {
   assert.equal(await initializeWithEmbeddedContext("true"), true);
 });
 
-test("initialize advertises optional native Pi fork and tree pickers", async () => {
-  const agent = new MagPiAcpAgent({} as never);
-  const response = await agent.initialize({ protocolVersion: 1 } as never);
+void test("initialize advertises optional native Pi fork and tree pickers", async () => {
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  const response = await agent.initialize({ protocolVersion: 1 });
 
   assert.deepEqual(response.agentCapabilities?._meta, {
     [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,

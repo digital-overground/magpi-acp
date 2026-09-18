@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { listPiSessions } from "../../src/acp/pi-sessions.js";
 
-test("listPiSessions: respects sessionDir from pi settings.json", () => {
+void test("listPiSessions: respects sessionDir from pi settings.json", () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-test-"));
   const customSessionsDir = path.join(root, "somewhere-else", "--p--");
   mkdirSync(customSessionsDir, { recursive: true });

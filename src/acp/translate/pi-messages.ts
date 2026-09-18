@@ -1,5 +1,7 @@
+import { asRecord } from "../../unknown.js";
+
 const textFromBlock = (block: unknown): string => {
-  const contentBlock = block as { type?: unknown; text?: unknown } | null;
+  const contentBlock = asRecord(block);
   return contentBlock?.type === "text" && typeof contentBlock.text === "string"
     ? contentBlock.text
     : "";

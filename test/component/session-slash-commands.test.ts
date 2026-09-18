@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MagPiAcpSession } from "../../src/acp/session.js";
-import type { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
 } from "../helpers/fakes.js";
 
-test("MagPiAcpSession: passes slash commands to Pi for native expansion", async () => {
+void test("MagPiAcpSession: passes slash commands to Pi for native expansion", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -17,7 +16,7 @@ test("MagPiAcpSession: passes slash commands to Pi for native expansion", async 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 

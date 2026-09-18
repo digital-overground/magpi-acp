@@ -1,10 +1,18 @@
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+
+import {
+  chunkToString,
+  hasMessageId,
+  parseJsonObject,
+  responseSessionId,
+  sendJson,
+  waitForExit,
+} from "./smoke-helpers.mjs";
 
 const cwd = process.cwd();
 
 const build = spawn("npm", ["run", "build"], { cwd, stdio: "inherit" });
-const [buildExitCode] = await once(build, "exit");
+const buildExitCode = await waitForExit(build);
 if (buildExitCode !== 0) {
   throw new Error(`build failed: ${buildExitCode}`);
 }
@@ -16,48 +24,61 @@ const child = spawn("node", ["dist/index.js"], {
 });
 
 child.stdout.setEncoding("utf-8");
-child.stdout.on("data", (chunk) => process.stdout.write(chunk));
+child.stdout.on(
+  "data",
+  /** @param {unknown} chunk - Subprocess output chunk. */
+  (chunk) => {
+    process.stdout.write(chunkToString(chunk));
+  }
+);
 
-const send = (obj) => {
-  child.stdin.write(`${JSON.stringify(obj)}\n`);
+/** @param {unknown} object - JSON-compatible request. */
+const send = (object) => {
+  sendJson(child.stdin, object);
 };
 
+/** @type {string | null} */
 let sessionId = null;
 let buffer = "";
-child.stdout.on("data", (chunk) => {
-  buffer += chunk;
-  const lines = buffer.split("\n");
-  buffer = lines.pop() ?? "";
+child.stdout.on(
+  "data",
+  /** @param {unknown} chunk - Subprocess output chunk. */
+  (chunk) => {
+    buffer += chunkToString(chunk);
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
 
-  for (const line of lines) {
-    if (!line.trim()) {
-      continue;
-    }
-    let msg;
-    try {
-      msg = JSON.parse(line);
-    } catch {
-      continue;
-    }
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      const msg = parseJsonObject(line);
+      if (msg === null) {
+        continue;
+      }
 
-    if (msg?.id === 2 && msg?.result?.sessionId && !sessionId) {
-      ({ sessionId } = msg.result);
-      send({
-        id: 3,
-        jsonrpc: "2.0",
-        method: "session/prompt",
-        params: {
-          prompt: [{ text: "/compact Keep it short", type: "text" }],
-          sessionId,
-        },
-      });
-    }
+      const newSessionId = hasMessageId(msg, 2) ? responseSessionId(msg) : null;
+      if (newSessionId !== null && sessionId === null) {
+        sessionId = newSessionId;
+        send({
+          id: 3,
+          jsonrpc: "2.0",
+          method: "session/prompt",
+          params: {
+            prompt: [{ text: "/compact Keep it short", type: "text" }],
+            sessionId,
+          },
+        });
+      }
 
-    if (msg?.id === 3) {
-      setTimeout(() => child.kill("SIGTERM"), 50);
+      if (hasMessageId(msg, 3)) {
+        setTimeout(() => {
+          child.kill("SIGTERM");
+        }, 50);
+      }
     }
   }
-});
+);
 
 send({
   id: 1,

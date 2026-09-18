@@ -5,7 +5,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { MagPiAcpAgent } from "../../src/acp/agent.js";
-import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
+import {
+  FakeAgentSideConnection,
+  asAgentConn,
+  replaceProperty,
+} from "../helpers/fakes.js";
 
 class FakeSessions {
   private readonly session: Record<string, unknown>;
@@ -23,10 +27,7 @@ class FakeSessions {
   }
 
   maybeGet(sessionId: string) {
-    if (sessionId !== this.session.sessionId) {
-      return;
-    }
-    return this.session;
+    return sessionId === this.session.sessionId ? this.session : undefined;
   }
 
   get(sessionId: string) {
@@ -37,29 +38,37 @@ class FakeSessions {
   }
 }
 
-test("MagPiAcpAgent: newSession returns configOptions for model and thinking selectors", async () => {
+const setSession = (
+  agent: MagPiAcpAgent,
+  session: Record<string, unknown>
+): void => {
+  replaceProperty(agent, "sessions", new FakeSessions(session));
+};
+
+void test("MagPiAcpAgent: newSession returns configOptions for model and thinking selectors", async () => {
   const realSetTimeout = globalThis.setTimeout;
-  (globalThis as unknown as { setTimeout: unknown }).setTimeout = () =>
-    0 as never;
+  replaceProperty(globalThis, "setTimeout", () => 0);
 
   try {
     const conn = new FakeAgentSideConnection();
     const session = {
       cwd: process.cwd(),
       proc: {
-        getAvailableModels() {
-          return Promise.resolve({
+        async getAvailableModels() {
+          await Promise.resolve();
+          return {
             models: [
               { id: "alpha", name: "Alpha", provider: "test" },
               { id: "beta", name: "Beta", provider: "test" },
             ],
-          });
+          };
         },
-        getState() {
-          return Promise.resolve({
+        async getState() {
+          await Promise.resolve();
+          return {
             model: { id: "beta", provider: "test" },
             thinkingLevel: "high",
-          });
+          };
         },
       },
       sendStartupInfoIfPending() {},
@@ -67,15 +76,13 @@ test("MagPiAcpAgent: newSession returns configOptions for model and thinking sel
       setStartupInfo() {},
     };
 
-    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
-    (agent as unknown as { sessions: unknown }).sessions = new FakeSessions(
-      session
-    ) as never;
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+    setSession(agent, session);
 
     const result = await agent.newSession({
       cwd: process.cwd(),
       mcpServers: [],
-    } as never);
+    });
 
     assert.equal(result.models?.currentModelId, "test/beta");
     assert.equal(result.modes?.currentModeId, "high");
@@ -114,12 +121,11 @@ test("MagPiAcpAgent: newSession returns configOptions for model and thinking sel
       ]
     );
   } finally {
-    (globalThis as unknown as { setTimeout: unknown }).setTimeout =
-      realSetTimeout;
+    replaceProperty(globalThis, "setTimeout", realSetTimeout);
   }
 });
 
-test("MagPiAcpAgent: setSessionConfigOption maps model changes to pi and emits config_option_update", async () => {
+void test("MagPiAcpAgent: setSessionConfigOption maps model changes to pi and emits config_option_update", async () => {
   const conn = new FakeAgentSideConnection();
   const state = {
     model: { id: "alpha", provider: "test" },
@@ -149,16 +155,14 @@ test("MagPiAcpAgent: setSessionConfigOption maps model changes to pi and emits c
     sessionId: "s1",
   };
 
-  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
-  (agent as unknown as { sessions: unknown }).sessions = new FakeSessions(
-    session
-  ) as never;
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+  setSession(agent, session);
 
   const result = await agent.setSessionConfigOption({
     configId: "model",
     sessionId: "s1",
     value: "test/beta",
-  } as never);
+  });
 
   assert.deepEqual(setModelCalls, [{ modelId: "beta", provider: "test" }]);
   assert.equal(
@@ -176,7 +180,7 @@ test("MagPiAcpAgent: setSessionConfigOption maps model changes to pi and emits c
   ]);
 });
 
-test("MagPiAcpAgent: role config sets the model and thinking level together", async () => {
+void test("MagPiAcpAgent: role config sets the model and thinking level together", async () => {
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const agentDir = mkdtempSync(path.join(tmpdir(), "magpi-acp-roles-"));
   process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -219,16 +223,14 @@ test("MagPiAcpAgent: role config sets the model and thinking level together", as
       sessionId: "s1",
     };
 
-    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
-    (agent as unknown as { sessions: unknown }).sessions = new FakeSessions(
-      session
-    ) as never;
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+    setSession(agent, session);
 
     const result = await agent.setSessionConfigOption({
       configId: "role",
       sessionId: "s1",
       value: "build",
-    } as never);
+    });
 
     assert.deepEqual(setModelCalls, [{ modelId: "beta", provider: "test" }]);
     assert.deepEqual(thinkingLevels, ["high"]);
@@ -264,7 +266,7 @@ test("MagPiAcpAgent: role config sets the model and thinking level together", as
   }
 });
 
-test("MagPiAcpAgent: setSessionConfigOption maps thought level changes to pi and emits sync updates", async () => {
+void test("MagPiAcpAgent: setSessionConfigOption maps thought level changes to pi and emits sync updates", async () => {
   const conn = new FakeAgentSideConnection();
   const state = {
     model: { id: "alpha", provider: "test" },
@@ -291,16 +293,14 @@ test("MagPiAcpAgent: setSessionConfigOption maps thought level changes to pi and
     sessionId: "s1",
   };
 
-  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as never);
-  (agent as unknown as { sessions: unknown }).sessions = new FakeSessions(
-    session
-  ) as never;
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+  setSession(agent, session);
 
   const result = await agent.setSessionConfigOption({
     configId: "thought_level",
     sessionId: "s1",
     value: "xhigh",
-  } as never);
+  });
 
   assert.deepEqual(thinkingLevels, ["xhigh"]);
   assert.equal(

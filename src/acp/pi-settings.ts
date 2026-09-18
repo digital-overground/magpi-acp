@@ -2,8 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-const isObject = (x: unknown): x is Record<string, unknown> =>
-  Boolean(x) && typeof x === "object" && !Array.isArray(x);
+import { isRecord } from "../unknown.js";
+
+const isObject = isRecord;
 
 const deepMerge = (
   a: Record<string, unknown>,
@@ -23,17 +24,19 @@ const readJsonFile = (filePath: string): Record<string, unknown> => {
       return {};
     }
     const raw = readFileSync(filePath, "utf-8");
-    const data = JSON.parse(raw);
+    const data: unknown = JSON.parse(raw);
     return isObject(data) ? data : {};
   } catch {
     return {};
   }
 };
 
-export const getAgentDir = (): string =>
-  process.env.PI_CODING_AGENT_DIR
-    ? path.resolve(process.env.PI_CODING_AGENT_DIR)
-    : path.join(homedir(), ".pi", "agent");
+export const getAgentDir = (): string => {
+  const configured = process.env.PI_CODING_AGENT_DIR;
+  return configured === undefined
+    ? path.join(homedir(), ".pi", "agent")
+    : path.resolve(configured);
+};
 
 const getMergedSettings = (cwd: string): Record<string, unknown> => {
   const globalSettingsPath = path.join(getAgentDir(), "settings.json");
@@ -57,18 +60,17 @@ export interface PiRole {
     | "max";
 }
 
+const isThinkingLevel = (value: string): value is PiRole["thinkingLevel"] =>
+  value === "off" ||
+  value === "minimal" ||
+  value === "low" ||
+  value === "medium" ||
+  value === "high" ||
+  value === "xhigh" ||
+  value === "max";
+
 export const getRoles = (): PiRole[] => {
   const roles = readJsonFile(path.join(getAgentDir(), "roles.json"));
-  const thinkingLevels = new Set([
-    "off",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-  ]);
-
   return Object.entries(roles).flatMap(([id, value]) => {
     if (!isObject(value)) {
       return [];
@@ -76,10 +78,14 @@ export const getRoles = (): PiRole[] => {
     const model = typeof value.model === "string" ? value.model.trim() : "";
     const thinkingLevel =
       typeof value.thinkingLevel === "string" ? value.thinkingLevel : "";
-    if (!id || !model || !thinkingLevels.has(thinkingLevel)) {
+    if (
+      id.length === 0 ||
+      model.length === 0 ||
+      !isThinkingLevel(thinkingLevel)
+    ) {
       return [];
     }
-    return [{ id, model, thinkingLevel } as PiRole];
+    return [{ id, model, thinkingLevel }];
   });
 };
 

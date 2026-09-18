@@ -6,19 +6,13 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { MagPiAcpSession } from "../../src/acp/session.js";
-import type { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import {
   FakeAgentSideConnection,
   FakePiRpcProcess,
   asAgentConn,
+  asRecord,
 } from "../helpers/fakes.js";
-
-type UnknownRecord = Record<string, unknown>;
-
-const asRecord = (value: unknown): UnknownRecord => {
-  assert.ok(value !== null && typeof value === "object");
-  return value as UnknownRecord;
-};
+import type { UnknownRecord } from "../helpers/fakes.js";
 
 const updateAt = (
   conn: FakeAgentSideConnection,
@@ -50,7 +44,7 @@ const updateTextAt = (conn: FakeAgentSideConnection, index: number): string => {
   return text;
 };
 
-test("MagPiAcpSession: emits agent_message_chunk for text_delta", async () => {
+void test("MagPiAcpSession: emits agent_message_chunk for text_delta", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -58,7 +52,7 @@ test("MagPiAcpSession: emits agent_message_chunk for text_delta", async () => {
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -81,7 +75,7 @@ test("MagPiAcpSession: emits agent_message_chunk for text_delta", async () => {
   });
 });
 
-test("MagPiAcpSession: emits agent_thought_chunk for thinking_delta", async () => {
+void test("MagPiAcpSession: emits agent_thought_chunk for thinking_delta", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -89,7 +83,7 @@ test("MagPiAcpSession: emits agent_thought_chunk for thinking_delta", async () =
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -108,7 +102,7 @@ test("MagPiAcpSession: emits agent_thought_chunk for thinking_delta", async () =
   });
 });
 
-test("MagPiAcpSession: emits tool_call + tool_call_update + completes", async () => {
+void test("MagPiAcpSession: emits tool_call + tool_call_update + completes", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -116,7 +110,7 @@ test("MagPiAcpSession: emits tool_call + tool_call_update + completes", async ()
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -176,7 +170,7 @@ test("MagPiAcpSession: emits tool_call + tool_call_update + completes", async ()
   assert.equal(updateAt(conn, 2).rawOutput, undefined);
 });
 
-test("MagPiAcpSession: emits tool locations from pi path args", async () => {
+void test("MagPiAcpSession: emits tool locations from pi path args", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -184,7 +178,7 @@ test("MagPiAcpSession: emits tool locations from pi path args", async () => {
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -204,7 +198,7 @@ test("MagPiAcpSession: emits tool locations from pi path args", async () => {
   ]);
 });
 
-test("MagPiAcpSession: handles extension select via ACP permission request", async () => {
+void test("MagPiAcpSession: handles extension select via ACP permission request", async () => {
   const conn = new FakeAgentSideConnection();
   conn.nextPermissionResponse = {
     outcome: { optionId: "choice-1", outcome: "selected" },
@@ -215,7 +209,7 @@ test("MagPiAcpSession: handles extension select via ACP permission request", asy
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -251,7 +245,7 @@ test("MagPiAcpSession: handles extension select via ACP permission request", asy
   assert.deepEqual(proc.extensionUiResponses, [{ id: "ui-1", value: "Beta" }]);
 });
 
-test("MagPiAcpSession: handles extension confirm via ACP permission request", async () => {
+void test("MagPiAcpSession: handles extension confirm via ACP permission request", async () => {
   const conn = new FakeAgentSideConnection();
   conn.nextPermissionResponse = {
     outcome: { optionId: "no", outcome: "selected" },
@@ -262,7 +256,7 @@ test("MagPiAcpSession: handles extension confirm via ACP permission request", as
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -286,7 +280,7 @@ test("MagPiAcpSession: handles extension confirm via ACP permission request", as
   ]);
 });
 
-test("MagPiAcpSession: sends cancelled response when ACP confirm is cancelled", async () => {
+void test("MagPiAcpSession: sends cancelled response when ACP confirm is cancelled", async () => {
   const conn = new FakeAgentSideConnection();
   conn.nextPermissionResponse = { outcome: { outcome: "cancelled" } };
   const proc = new FakePiRpcProcess();
@@ -295,7 +289,7 @@ test("MagPiAcpSession: sends cancelled response when ACP confirm is cancelled", 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -313,7 +307,7 @@ test("MagPiAcpSession: sends cancelled response when ACP confirm is cancelled", 
   ]);
 });
 
-test("MagPiAcpSession: combines an extension selection with custom context", async () => {
+void test("MagPiAcpSession: combines an extension selection with custom context", async () => {
   const conn = new FakeAgentSideConnection();
   conn.nextElicitationResponse = {
     action: "accept",
@@ -325,7 +319,7 @@ test("MagPiAcpSession: combines an extension selection with custom context", asy
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -394,7 +388,7 @@ test("MagPiAcpSession: combines an extension selection with custom context", asy
   ]);
 });
 
-test("MagPiAcpSession: turns an extension-provided free-form choice into a text field", async () => {
+void test("MagPiAcpSession: turns an extension-provided free-form choice into a text field", async () => {
   const conn = new FakeAgentSideConnection();
   conn.nextElicitationResponse = {
     action: "accept",
@@ -406,7 +400,7 @@ test("MagPiAcpSession: turns an extension-provided free-form choice into a text 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -442,7 +436,7 @@ test("MagPiAcpSession: turns an extension-provided free-form choice into a text 
   ]);
 });
 
-test("MagPiAcpSession: handles extension confirm with ACP elicitation", async () => {
+void test("MagPiAcpSession: handles extension confirm with ACP elicitation", async () => {
   const conn = new FakeAgentSideConnection();
   conn.nextElicitationResponse = {
     action: "accept",
@@ -454,7 +448,7 @@ test("MagPiAcpSession: handles extension confirm with ACP elicitation", async ()
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -483,7 +477,7 @@ test("MagPiAcpSession: handles extension confirm with ACP elicitation", async ()
   ]);
 });
 
-test("MagPiAcpSession: handles input and editor with ACP elicitation", async () => {
+void test("MagPiAcpSession: handles input and editor with ACP elicitation", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -491,7 +485,7 @@ test("MagPiAcpSession: handles input and editor with ACP elicitation", async () 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -538,7 +532,7 @@ test("MagPiAcpSession: handles input and editor with ACP elicitation", async () 
   ]);
 });
 
-test("MagPiAcpSession: cancels extension UI request when ACP elicitation is not accepted", async () => {
+void test("MagPiAcpSession: cancels extension UI request when ACP elicitation is not accepted", async () => {
   const conn = new FakeAgentSideConnection();
   conn.nextElicitationResponse = {
     action: "_custom",
@@ -550,7 +544,7 @@ test("MagPiAcpSession: cancels extension UI request when ACP elicitation is not 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
     supportsFormElicitation: true,
   });
@@ -568,7 +562,7 @@ test("MagPiAcpSession: cancels extension UI request when ACP elicitation is not 
   ]);
 });
 
-test("MagPiAcpSession: cancels unsupported input and editor extension UI requests with visible fallback", async () => {
+void test("MagPiAcpSession: cancels unsupported input and editor extension UI requests with visible fallback", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -576,7 +570,7 @@ test("MagPiAcpSession: cancels unsupported input and editor extension UI request
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -604,7 +598,7 @@ test("MagPiAcpSession: cancels unsupported input and editor extension UI request
   assert.match(updateTextAt(conn, 1), /editor UI request is not supported/u);
 });
 
-test("MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attempt/maxAttempts and rounded delay", async () => {
+void test("MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attempt/maxAttempts and rounded delay", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -612,7 +606,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attem
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -632,7 +626,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_retry_start with attem
   });
 });
 
-test("MagPiAcpSession: formats a positive sub-second auto_retry_start delay as waiting 1s", async () => {
+void test("MagPiAcpSession: formats a positive sub-second auto_retry_start delay as waiting 1s", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -640,7 +634,7 @@ test("MagPiAcpSession: formats a positive sub-second auto_retry_start delay as w
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -660,7 +654,7 @@ test("MagPiAcpSession: formats a positive sub-second auto_retry_start delay as w
   });
 });
 
-test("MagPiAcpSession: falls back to a generic retry message when auto_retry_start fields are missing or malformed", async () => {
+void test("MagPiAcpSession: falls back to a generic retry message when auto_retry_start fields are missing or malformed", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -668,7 +662,7 @@ test("MagPiAcpSession: falls back to a generic retry message when auto_retry_sta
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -688,7 +682,7 @@ test("MagPiAcpSession: falls back to a generic retry message when auto_retry_sta
   });
 });
 
-test("MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_start status text", async () => {
+void test("MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_start status text", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -696,7 +690,7 @@ test("MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_s
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -716,7 +710,7 @@ test("MagPiAcpSession: omits raw errorMessage content from surfaced auto_retry_s
   assert.equal(updateTextAt(conn, 0).includes("provider overloaded"), false);
 });
 
-test("MagPiAcpSession: emits agent_message_chunk for auto_retry_end", async () => {
+void test("MagPiAcpSession: emits agent_message_chunk for auto_retry_end", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -724,7 +718,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_retry_end", async () =
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -739,7 +733,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_retry_end", async () =
   });
 });
 
-test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_start", async () => {
+void test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_start", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -747,7 +741,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_start", asy
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -765,7 +759,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_start", asy
   });
 });
 
-test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_end", async () => {
+void test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_end", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -773,7 +767,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_end", async
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -791,7 +785,7 @@ test("MagPiAcpSession: emits agent_message_chunk for auto_compaction_end", async
   });
 });
 
-test("MagPiAcpSession: preserves ordering when auto_retry_start is interleaved with text_delta events", async () => {
+void test("MagPiAcpSession: preserves ordering when auto_retry_start is interleaved with text_delta events", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -799,7 +793,7 @@ test("MagPiAcpSession: preserves ordering when auto_retry_start is interleaved w
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -842,7 +836,7 @@ test("MagPiAcpSession: preserves ordering when auto_retry_start is interleaved w
   );
 });
 
-test("MagPiAcpSession: defers tool locations until execution starts with complete path args", async () => {
+void test("MagPiAcpSession: defers tool locations until execution starts with complete path args", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -850,7 +844,7 @@ test("MagPiAcpSession: defers tool locations until execution starts with complet
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -896,7 +890,7 @@ test("MagPiAcpSession: defers tool locations until execution starts with complet
   assert.deepEqual(updateAt(conn, 2).locations, [{ path: "/tmp/test.txt" }]);
 });
 
-test("MagPiAcpSession: emits edit tool line when oldText matches uniquely", async () => {
+void test("MagPiAcpSession: emits edit tool line when oldText matches uniquely", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
   const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-"));
@@ -909,7 +903,7 @@ test("MagPiAcpSession: emits edit tool line when oldText matches uniquely", asyn
     conn: asAgentConn(conn),
     cwd,
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -927,7 +921,7 @@ test("MagPiAcpSession: emits edit tool line when oldText matches uniquely", asyn
   assert.deepEqual(updateAt(conn, 0).locations, [{ line: 3, path: filePath }]);
 });
 
-test("MagPiAcpSession: emits edit tool line from edits array when oldText matches uniquely", async () => {
+void test("MagPiAcpSession: emits edit tool line from edits array when oldText matches uniquely", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
   const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-edits-"));
@@ -940,7 +934,7 @@ test("MagPiAcpSession: emits edit tool line from edits array when oldText matche
     conn: asAgentConn(conn),
     cwd,
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -961,7 +955,7 @@ test("MagPiAcpSession: emits edit tool line from edits array when oldText matche
   assert.deepEqual(updateAt(conn, 0).locations, [{ line: 3, path: filePath }]);
 });
 
-test("MagPiAcpSession: emits edit tool line from stringified edits array", async () => {
+void test("MagPiAcpSession: emits edit tool line from stringified edits array", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
   const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-edits-string-"));
@@ -974,7 +968,7 @@ test("MagPiAcpSession: emits edit tool line from stringified edits array", async
     conn: asAgentConn(conn),
     cwd,
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -995,7 +989,7 @@ test("MagPiAcpSession: emits edit tool line from stringified edits array", async
   assert.deepEqual(updateAt(conn, 0).locations, [{ line: 3, path: filePath }]);
 });
 
-test("MagPiAcpSession: omits edit tool line when oldText matches multiple times", async () => {
+void test("MagPiAcpSession: omits edit tool line when oldText matches multiple times", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
   const cwd = mkdtempSync(path.join(tmpdir(), "magpi-acp-lines-dup-"));
@@ -1008,7 +1002,7 @@ test("MagPiAcpSession: omits edit tool line when oldText matches multiple times"
     conn: asAgentConn(conn),
     cwd,
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -1026,7 +1020,7 @@ test("MagPiAcpSession: omits edit tool line when oldText matches multiple times"
   assert.deepEqual(updateAt(conn, 0).locations, [{ path: filePath }]);
 });
 
-test("MagPiAcpSession: emits an ACP plan from todo extension results", async () => {
+void test("MagPiAcpSession: emits an ACP plan from todo extension results", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -1034,7 +1028,7 @@ test("MagPiAcpSession: emits an ACP plan from todo extension results", async () 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -1077,7 +1071,7 @@ test("MagPiAcpSession: emits an ACP plan from todo extension results", async () 
   );
 });
 
-test("MagPiAcpSession: prompt remains pending through multiple agent_end events until agent_settled", async () => {
+void test("MagPiAcpSession: prompt remains pending through multiple agent_end events until agent_settled", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -1085,7 +1079,7 @@ test("MagPiAcpSession: prompt remains pending through multiple agent_end events 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -1105,7 +1099,7 @@ test("MagPiAcpSession: prompt remains pending through multiple agent_end events 
   assert.equal(await prompt, "end_turn");
 });
 
-test("MagPiAcpSession: emits ACP context usage and cost after a turn", async () => {
+void test("MagPiAcpSession: emits ACP context usage and cost after a turn", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
   proc.sessionStats = {
@@ -1121,7 +1115,7 @@ test("MagPiAcpSession: emits ACP context usage and cost after a turn", async () 
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -1142,7 +1136,7 @@ test("MagPiAcpSession: emits ACP context usage and cost after a turn", async () 
   );
 });
 
-test("MagPiAcpSession: does not re-emit startup info on first prompt after it was already sent", async () => {
+void test("MagPiAcpSession: does not re-emit startup info on first prompt after it was already sent", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -1150,7 +1144,7 @@ test("MagPiAcpSession: does not re-emit startup info on first prompt after it wa
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -1182,7 +1176,7 @@ test("MagPiAcpSession: does not re-emit startup info on first prompt after it wa
   assert.equal(reason, "end_turn");
 });
 
-test("MagPiAcpSession: cancel flips stopReason to cancelled", async () => {
+void test("MagPiAcpSession: cancel flips stopReason to cancelled", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -1190,7 +1184,7 @@ test("MagPiAcpSession: cancel flips stopReason to cancelled", async () => {
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -1206,7 +1200,7 @@ test("MagPiAcpSession: cancel flips stopReason to cancelled", async () => {
   assert.equal(reason, "cancelled");
 });
 
-test("MagPiAcpSession: queues concurrent prompt and starts it after agent_settled", async () => {
+void test("MagPiAcpSession: queues concurrent prompt and starts it after agent_settled", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -1214,7 +1208,7 @@ test("MagPiAcpSession: queues concurrent prompt and starts it after agent_settle
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 
@@ -1246,7 +1240,7 @@ test("MagPiAcpSession: queues concurrent prompt and starts it after agent_settle
   assert.equal(r2, "end_turn");
 });
 
-test("MagPiAcpSession: cancel clears queued prompts", async () => {
+void test("MagPiAcpSession: cancel clears queued prompts", async () => {
   const conn = new FakeAgentSideConnection();
   const proc = new FakePiRpcProcess();
 
@@ -1254,7 +1248,7 @@ test("MagPiAcpSession: cancel clears queued prompts", async () => {
     conn: asAgentConn(conn),
     cwd: process.cwd(),
     mcpServers: [],
-    proc: proc as unknown as PiRpcProcess,
+    proc: proc.process,
     sessionId: "s1",
   });
 

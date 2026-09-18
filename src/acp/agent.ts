@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { RequestError } from "@agentclientprotocol/sdk";
 import type {
   Agent as ACPAgent,
-  AgentSideConnection,
   AuthenticateRequest,
   CancelNotification,
   ForkSessionRequest,
@@ -41,8 +40,10 @@ import {
   MAGPI_ACP_TREE_METHOD,
   MAGPI_ACP_TREE_PICKER_CAPABILITY,
 } from "../pi-rpc/tree-command.js";
+import { asRecord, errorMessage, stringValue } from "../unknown.js";
 import { maybeAuthRequiredError } from "./auth-required.js";
 import { getAuthMethods } from "./auth.js";
+import type { AgentClientConnection } from "./connection.js";
 import { toAvailableCommandsFromPiGetCommands } from "./pi-commands.js";
 import { activeSessionMessages } from "./pi-session-tree.js";
 import { listPiSessions, findPiSession } from "./pi-sessions.js";
@@ -104,8 +105,8 @@ interface SessionConfiguration {
 
 type UnknownRecord = Record<string, unknown>;
 interface PrefetchedConfiguration {
-  availableModels?: unknown | null;
-  state?: unknown | null;
+  availableModels?: unknown;
+  state?: unknown;
 }
 
 const MODEL_CONFIG_ID = "model";
@@ -120,16 +121,6 @@ const THINKING_LEVELS: ThinkingLevel[] = [
   "xhigh",
   "max",
 ];
-
-const asRecord = (value: unknown): UnknownRecord | undefined =>
-  value !== null && typeof value === "object"
-    ? (value as UnknownRecord)
-    : undefined;
-
-const errorMessage = (error: unknown): string => {
-  const message = asRecord(error)?.message;
-  return typeof message === "string" ? message : String(error);
-};
 
 const isThinkingLevel = (value: string): value is ThinkingLevel =>
   THINKING_LEVELS.some((level) => level === value);
@@ -148,7 +139,7 @@ const findTreeMessage = (
       return node.entry;
     }
     const child = findTreeMessage(node.children, entryId);
-    if (child) {
+    if (child !== null) {
       return child;
     }
   }
@@ -254,14 +245,15 @@ const buildConfigOptions = (state: {
     },
   ];
 
-  if (state.models?.availableModels.length) {
+  const { models } = state;
+  if (models !== null && models.availableModels.length > 0) {
     configOptions.unshift({
       category: "model",
-      currentValue: state.models.currentModelId,
+      currentValue: models.currentModelId,
       description: "Select the model for this session",
       id: MODEL_CONFIG_ID,
       name: "Model",
-      options: state.models.availableModels.map((model) => ({
+      options: models.availableModels.map((model) => ({
         description: model.description ?? null,
         name: model.name,
         value: model.modelId,
@@ -270,7 +262,7 @@ const buildConfigOptions = (state: {
     });
   }
 
-  if (state.roles.length) {
+  if (state.roles.length > 0) {
     const currentRole = state.roles.find(
       (candidate) =>
         candidate.model === state.models?.currentModelId &&
@@ -323,12 +315,12 @@ const getThinkingState = async (
 
 const parseAdvertisedModel = (value: unknown): AdvertisedModel | null => {
   const model = asRecord(value);
-  const provider = String(model?.provider ?? "").trim();
-  const id = String(model?.id ?? "").trim();
-  if (!(provider && id)) {
+  const provider = stringValue(model?.provider).trim();
+  const id = stringValue(model?.id).trim();
+  if (provider.length === 0 || id.length === 0) {
     return null;
   }
-  const name = String(model?.name ?? id);
+  const name = stringValue(model?.name, id);
   return {
     description: null,
     modelId: `${provider}/${id}`,
@@ -354,21 +346,26 @@ const getModelState = async (
   proc: PiRpcProcess,
   pre?: PrefetchedConfiguration
 ): Promise<SessionConfiguration["models"]> => {
-  const availableValue = await resolveRpcValue(pre?.availableModels, () =>
-    proc.getAvailableModels()
+  const availableValue = await resolveRpcValue(
+    pre?.availableModels,
+    async () => await proc.getAvailableModels()
   );
   const rawModels = asRecord(availableValue)?.models;
   const availableModels = (Array.isArray(rawModels) ? rawModels : [])
     .map(parseAdvertisedModel)
     .filter((model): model is AdvertisedModel => model !== null);
 
-  const stateValue = await resolveRpcValue(pre?.state, () => proc.getState());
+  const stateValue = await resolveRpcValue(
+    pre?.state,
+    async () => await proc.getState()
+  );
   const model = asRecord(asRecord(stateValue)?.model);
-  const provider = String(model?.provider ?? "").trim();
-  const id = String(model?.id ?? "").trim();
-  let currentModelId = provider && id ? `${provider}/${id}` : null;
+  const provider = stringValue(model?.provider).trim();
+  const id = stringValue(model?.id).trim();
+  let currentModelId =
+    provider.length > 0 && id.length > 0 ? `${provider}/${id}` : null;
 
-  if (!(availableModels.length || currentModelId)) {
+  if (availableModels.length === 0 && currentModelId === null) {
     return null;
   }
   currentModelId ??= availableModels[0]?.modelId ?? "default";
@@ -391,7 +388,7 @@ const getSessionConfiguration = async (
 };
 
 const emitConfigOptionsUpdate = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   sessionId: string,
   proc: PiRpcProcess
 ): Promise<SessionConfigOption[]> => {
@@ -415,18 +412,23 @@ const setSessionModel = async (
     modelId = rest.join("/");
   }
 
-  if (!provider) {
+  if (provider === null || provider.length === 0) {
     const rawModels = asRecord(await proc.getAvailableModels())?.models;
     const models = Array.isArray(rawModels) ? rawModels : [];
     const found = models
       .map(asRecord)
-      .find((model) => String(model?.id) === modelId);
-    if (found) {
-      provider = String(found.provider);
-      modelId = String(found.id);
+      .find((model) => stringValue(model?.id) === modelId);
+    if (found !== undefined) {
+      provider = stringValue(found.provider);
+      modelId = stringValue(found.id);
     }
   }
-  if (!(provider && modelId)) {
+  if (
+    provider === null ||
+    provider.length === 0 ||
+    modelId === null ||
+    modelId.length === 0
+  ) {
     throw RequestError.invalidParams(`Unknown modelId: ${requestedModelId}`);
   }
   await proc.setModel(provider, modelId);
@@ -453,15 +455,15 @@ const installedPiVersion = (): string => {
     encoding: "utf-8",
     shell: shouldUseShellForPiCommand(command),
   });
-  return (
-    String(result.stdout ?? "").trim() || String(result.stderr ?? "").trim()
-  ).replace(/^v/iu, "");
+  const stdout = (result.stdout ?? "").trim();
+  const stderr = (result.stderr ?? "").trim();
+  return (stdout.length > 0 ? stdout : stderr).replace(/^v/iu, "");
 };
 
 const buildUpdateNotice = (): string | null => {
   try {
     const installed = installedPiVersion();
-    if (!installed || !isSemver(installed)) {
+    if (installed.length === 0 || !isSemver(installed)) {
       return null;
     }
     const latestResult = spawnSync(
@@ -469,10 +471,12 @@ const buildUpdateNotice = (): string | null => {
       ["view", "@earendil-works/pi-coding-agent", "version"],
       { encoding: "utf-8", timeout: 800 }
     );
-    const latest = String(latestResult.stdout ?? "")
-      .trim()
-      .replace(/^v/iu, "");
-    if (!latest || !isSemver(latest) || compareSemver(latest, installed) <= 0) {
+    const latest = (latestResult.stdout ?? "").trim().replace(/^v/iu, "");
+    if (
+      latest.length === 0 ||
+      !isSemver(latest) ||
+      compareSemver(latest, installed) <= 0
+    ) {
       return null;
     }
     return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @earendil-works/pi-coding-agent\``;
@@ -485,7 +489,7 @@ const buildStartupInfo = (options: { updateNotice: string | null }): string => {
   let piVersionText = "pi";
   try {
     const installed = installedPiVersion();
-    if (installed) {
+    if (installed.length > 0) {
       piVersionText = `pi v${installed}`;
     }
   } catch {
@@ -496,7 +500,7 @@ const buildStartupInfo = (options: { updateNotice: string | null }): string => {
     piVersionText,
     "collect shiny things",
   ];
-  if (options.updateNotice) {
+  if (options.updateNotice !== null && options.updateNotice.length > 0) {
     lines.push("", "---", options.updateNotice);
   }
   return `${lines.join("\n").trim()}\n`;
@@ -506,10 +510,8 @@ const findChangelog = (): string | null => {
   try {
     const whichCommand = process.platform === "win32" ? "where" : "which";
     const result = spawnSync(whichCommand, ["pi"], { encoding: "utf-8" });
-    const piPath = String(result.stdout ?? "")
-      .split(/\r?\n/u)[0]
-      ?.trim();
-    if (piPath) {
+    const piPath = (result.stdout ?? "").split(/\r?\n/u)[0]?.trim();
+    if (piPath !== undefined && piPath.length > 0) {
       const packageRoot = path.dirname(path.dirname(realpathSync(piPath)));
       const changelogPath = path.join(packageRoot, "CHANGELOG.md");
       if (existsSync(changelogPath)) {
@@ -521,8 +523,8 @@ const findChangelog = (): string | null => {
   }
   try {
     const npmRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf-8" });
-    const root = String(npmRoot.stdout ?? "").trim();
-    if (root) {
+    const root = (npmRoot.stdout ?? "").trim();
+    if (root.length > 0) {
       const changelogPath = path.join(
         root,
         "@earendil-works",
@@ -540,7 +542,7 @@ const findChangelog = (): string | null => {
 };
 
 const sendAgentText = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   sessionId: string,
   text: string
 ): Promise<void> => {
@@ -554,26 +556,27 @@ const sendAgentText = async (
 };
 
 const handleCompactCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   args: string[]
 ): Promise<void> => {
-  const customInstructions = args.join(" ").trim() || undefined;
+  const customText = args.join(" ").trim();
+  const customInstructions = customText.length > 0 ? customText : undefined;
   const result = asRecord(await session.proc.compact(customInstructions));
   const tokensBefore =
     typeof result?.tokensBefore === "number" ? result.tokensBefore : null;
   const summary = typeof result?.summary === "string" ? result.summary : null;
   const headerLines = [
-    `Compaction completed.${customInstructions ? " (custom instructions applied)" : ""}`,
+    `Compaction completed.${customInstructions === undefined ? "" : " (custom instructions applied)"}`,
     tokensBefore === null ? null : `Tokens before: ${tokensBefore}`,
   ].filter((line): line is string => line !== null);
-  const text = `${headerLines.join("\n")}${summary ? `\n\n${summary}` : ""}`;
+  const text = `${headerLines.join("\n")}${summary === null || summary.length === 0 ? "" : `\n\n${summary}`}`;
   await sendAgentText(conn, session.sessionId, text);
 };
 
 const tokenStatsParts = (value: unknown): string[] => {
   const tokens = asRecord(value);
-  if (!tokens) {
+  if (tokens === undefined) {
     return [];
   }
   const fields = [
@@ -589,16 +592,16 @@ const tokenStatsParts = (value: unknown): string[] => {
 };
 
 const handleSessionCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession
 ): Promise<void> => {
   const rawStats = await session.proc.getSessionStats();
   const stats = asRecord(rawStats);
   const lines: string[] = [];
-  if (stats?.sessionId) {
+  if (typeof stats?.sessionId === "string" && stats.sessionId.length > 0) {
     lines.push(`Session: ${stats.sessionId}`);
   }
-  if (stats?.sessionFile) {
+  if (typeof stats?.sessionFile === "string" && stats.sessionFile.length > 0) {
     lines.push(`Session file: ${stats.sessionFile}`);
   }
   if (typeof stats?.totalMessages === "number") {
@@ -611,19 +614,20 @@ const handleSessionCommand = async (
   if (tokenParts.length > 0) {
     lines.push(`Tokens: ${tokenParts.join(", ")}`);
   }
-  const text = lines.length
-    ? lines.join("\n")
-    : `Session stats:\n${JSON.stringify(rawStats, null, 2)}`;
+  const text =
+    lines.length > 0
+      ? lines.join("\n")
+      : `Session stats:\n${JSON.stringify(rawStats, null, 2)}`;
   await sendAgentText(conn, session.sessionId, text);
 };
 
 const handleNameCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   args: string[]
 ): Promise<void> => {
   const name = args.join(" ").trim();
-  if (!name) {
+  if (name.length === 0) {
     await sendAgentText(conn, session.sessionId, "Usage: /name <name>");
     return;
   }
@@ -672,20 +676,20 @@ const modeCommandDetails = (
       };
 
 const handleModeCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   args: string[],
   command: "follow-up" | "steering"
 ): Promise<void> => {
-  const mode = String(args[0] ?? "").toLowerCase();
+  const mode = (args[0] ?? "").toLowerCase();
   const details = modeCommandDetails(command);
   const state = asRecord(await session.proc.getState());
-  const current = String(state?.[details.stateField] ?? "");
-  if (!mode) {
+  const current = stringValue(state?.[details.stateField]);
+  if (mode.length === 0) {
     await sendAgentText(
       conn,
       session.sessionId,
-      `${details.label} mode: ${current || "unknown"}`
+      `${details.label} mode: ${current.length > 0 ? current : "unknown"}`
     );
     return;
   }
@@ -704,11 +708,11 @@ const handleModeCommand = async (
 };
 
 const handleChangelogCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession
 ): Promise<void> => {
   const changelogPath = findChangelog();
-  if (!changelogPath) {
+  if (changelogPath === null || changelogPath.length === 0) {
     await sendAgentText(
       conn,
       session.sessionId,
@@ -735,7 +739,7 @@ const handleChangelogCommand = async (
 };
 
 const sessionFileForExport = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession
 ): Promise<string | null> => {
   const state = asRecord(await session.proc.getState());
@@ -743,7 +747,12 @@ const sessionFileForExport = async (
     typeof state?.sessionFile === "string" ? state.sessionFile : null;
   const messageCount =
     typeof state?.messageCount === "number" ? state.messageCount : 0;
-  if (!sessionFile || messageCount === 0 || !existsSync(sessionFile)) {
+  if (
+    sessionFile === null ||
+    sessionFile.length === 0 ||
+    messageCount === 0 ||
+    !existsSync(sessionFile)
+  ) {
     await sendAgentText(
       conn,
       session.sessionId,
@@ -772,10 +781,10 @@ const sessionFileForExport = async (
 };
 
 const handleExportCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession
 ): Promise<void> => {
-  if (!(await sessionFileForExport(conn, session))) {
+  if ((await sessionFileForExport(conn, session)) === null) {
     return;
   }
   const safeSessionId = session.sessionId.replaceAll(/[^a-zA-Z0-9_-]/gu, "_");
@@ -792,7 +801,7 @@ const handleExportCommand = async (
     );
     return;
   }
-  if (!resultPath) {
+  if (resultPath.length === 0) {
     await sendAgentText(
       conn,
       session.sessionId,
@@ -827,7 +836,7 @@ const autoCompactEnabled = (mode: string, current: boolean): boolean => {
 };
 
 const handleAutoCompactCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   args: string[]
 ): Promise<void> => {
@@ -859,26 +868,34 @@ const handleAutoCompactCommand = async (
 };
 
 type SlashCommandHandler = (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   args: string[]
 ) => Promise<void>;
 
-const slashCommandHandlers: Record<string, SlashCommandHandler> = {
+const slashCommandHandlers: Partial<Record<string, SlashCommandHandler>> = {
   autocompact: handleAutoCompactCommand,
-  changelog: (conn, session) => handleChangelogCommand(conn, session),
+  changelog: async (conn, session) => {
+    await handleChangelogCommand(conn, session);
+  },
   compact: handleCompactCommand,
-  export: (conn, session) => handleExportCommand(conn, session),
-  "follow-up": (conn, session, args) =>
-    handleModeCommand(conn, session, args, "follow-up"),
+  export: async (conn, session) => {
+    await handleExportCommand(conn, session);
+  },
+  "follow-up": async (conn, session, args) => {
+    await handleModeCommand(conn, session, args, "follow-up");
+  },
   name: handleNameCommand,
-  session: (conn, session) => handleSessionCommand(conn, session),
-  steering: (conn, session, args) =>
-    handleModeCommand(conn, session, args, "steering"),
+  session: async (conn, session) => {
+    await handleSessionCommand(conn, session);
+  },
+  steering: async (conn, session, args) => {
+    await handleModeCommand(conn, session, args, "steering");
+  },
 };
 
 const handleSlashCommand = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   message: string
 ): Promise<boolean> => {
@@ -914,12 +931,12 @@ const restoredToolArguments = (messages: unknown[]): Map<string, unknown> => {
 };
 
 const replayUserMessage = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   sessionId: string,
   message: UnknownRecord
 ): Promise<void> => {
   const text = normalizePiMessageText(message.content);
-  if (!text) {
+  if (text.length === 0) {
     return;
   }
   await conn.sessionUpdate({
@@ -932,7 +949,7 @@ const replayUserMessage = async (
 };
 
 const replayAssistantMessage = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   sessionId: string,
   message: UnknownRecord
 ): Promise<void> => {
@@ -943,7 +960,7 @@ const replayAssistantMessage = async (
 };
 
 const replayBashResult = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   message: UnknownRecord,
   details: {
@@ -994,7 +1011,7 @@ const toolKind = (toolName: string): "edit" | "other" | "read" => {
 };
 
 const replayStandardToolResult = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   message: UnknownRecord,
   details: {
@@ -1034,18 +1051,18 @@ const replayStandardToolResult = async (
 };
 
 const replayToolResult = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   message: UnknownRecord,
   restoredArgs: Map<string, unknown>,
   todoPlan: TodoPlan
 ): Promise<TodoPlan> => {
-  const toolName = String(message.toolName ?? "tool");
+  const toolName = stringValue(message.toolName, "tool");
   const nextTodoPlan =
     toolName === "todo"
       ? (todoResultToPlanEntries(message) ?? todoPlan)
       : todoPlan;
-  const toolCallId = String(message.toolCallId ?? crypto.randomUUID());
+  const toolCallId = stringValue(message.toolCallId, crypto.randomUUID());
   const details = {
     isError: Boolean(message.isError),
     rawInput: message.args ?? restoredArgs.get(toolCallId) ?? null,
@@ -1059,34 +1076,40 @@ const replayToolResult = async (
 };
 
 const replayMessage = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   messageValue: unknown,
   restoredArgs: Map<string, unknown>,
   todoPlan: TodoPlan
 ): Promise<TodoPlan> => {
   const message = asRecord(messageValue);
-  if (!message) {
+  if (message === undefined) {
     return todoPlan;
   }
-  const role = String(message.role ?? "");
+  const role = stringValue(message.role);
   if (role === "user") {
     await replayUserMessage(conn, session.sessionId, message);
   } else if (role === "assistant") {
     await replayAssistantMessage(conn, session.sessionId, message);
   } else if (role === "toolResult") {
-    return replayToolResult(conn, session, message, restoredArgs, todoPlan);
+    return await replayToolResult(
+      conn,
+      session,
+      message,
+      restoredArgs,
+      todoPlan
+    );
   }
   return todoPlan;
 };
 
 const replayMessages = async (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   session: MagPiAcpSession,
   messages: unknown[],
   restoredArgs: Map<string, unknown>,
   index = 0,
-  todoPlan: TodoPlan = undefined
+  todoPlan?: TodoPlan
 ): Promise<TodoPlan> => {
   const message = messages[index];
   if (message === undefined) {
@@ -1099,7 +1122,7 @@ const replayMessages = async (
     restoredArgs,
     todoPlan
   );
-  return replayMessages(
+  return await replayMessages(
     conn,
     session,
     messages,
@@ -1118,11 +1141,18 @@ const loadMessages = async (
     return activeMessages.map((entry) => entry.message);
   }
   const messages = asRecord(await proc.getMessages())?.messages;
-  return Array.isArray(messages) ? messages : [];
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  const result: unknown[] = [];
+  for (const message of messages) {
+    result.push(message);
+  }
+  return result;
 };
 
 const advertiseCommands = (
-  conn: AgentSideConnection,
+  conn: AgentClientConnection,
   sessionId: string,
   proc: PiRpcProcess
 ): void => {
@@ -1150,8 +1180,20 @@ const advertiseCommands = (
   }, 0);
 };
 
+const assertKnownExtensionMethod = (method: string): void => {
+  if (
+    ![
+      MAGPI_ACP_FORK_MESSAGES_METHOD,
+      MAGPI_ACP_TREE_METHOD,
+      MAGPI_ACP_NAVIGATE_TREE_METHOD,
+    ].includes(method)
+  ) {
+    throw RequestError.methodNotFound(method);
+  }
+};
+
 export class MagPiAcpAgent implements ACPAgent {
-  private readonly conn: AgentSideConnection;
+  private readonly conn: AgentClientConnection;
   private readonly sessions = new SessionManager();
   private readonly restoringSessions = new Map<
     string,
@@ -1166,15 +1208,12 @@ export class MagPiAcpAgent implements ACPAgent {
   // Remember recent session cwd and use it as the default filter.
   private lastSessionCwd: string | null = null;
 
-  constructor(conn: AgentSideConnection, _config?: unknown) {
+  constructor(conn: AgentClientConnection, _config?: unknown) {
     this.conn = conn;
     void _config;
   }
 
-  private cleanupFailedNewSession(
-    sessionId: string,
-    state?: unknown | null
-  ): void {
+  private cleanupFailedNewSession(sessionId: string, state?: unknown): void {
     this.sessions.close(sessionId);
 
     const stateRecord = asRecord(state);
@@ -1184,7 +1223,7 @@ export class MagPiAcpAgent implements ACPAgent {
         ? stateRecord.sessionFile
         : findPiSession(sessionId)?.sessionFile;
 
-    if (sessionFile) {
+    if (sessionFile !== undefined && sessionFile.length > 0) {
       try {
         if (existsSync(sessionFile)) {
           unlinkSync(sessionFile);
@@ -1200,18 +1239,18 @@ export class MagPiAcpAgent implements ACPAgent {
     opts?: { mcpServers?: LoadSessionRequest["mcpServers"] }
   ): Promise<MagPiAcpSession> {
     const existing = this.sessions.maybeGet(sessionId);
-    if (existing) {
+    if (existing !== undefined) {
       return existing;
     }
 
     const inFlight = this.restoringSessions.get(sessionId);
-    if (inFlight) {
-      return inFlight;
+    if (inFlight !== undefined) {
+      return await inFlight;
     }
 
     const restorePromise = (async () => {
       const stored = findPiSession(sessionId);
-      if (!stored) {
+      if (stored === null) {
         throw RequestError.invalidParams(`Unknown sessionId: ${sessionId}`);
       }
 
@@ -1232,7 +1271,7 @@ export class MagPiAcpAgent implements ACPAgent {
             errorMessage(error)
           );
         }
-        throw error;
+        throw error instanceof Error ? error : new Error(errorMessage(error));
       }
 
       const session = this.sessions.getOrCreate(sessionId, {
@@ -1256,7 +1295,8 @@ export class MagPiAcpAgent implements ACPAgent {
     }
   }
 
-  initialize(params: InitializeRequest): Promise<InitializeResponse> {
+  async initialize(params: InitializeRequest): Promise<InitializeResponse> {
+    await Promise.resolve();
     // We currently only support ACP protocol version 1.
     const supportedVersion = 1;
     const requested = params.protocolVersion;
@@ -1266,7 +1306,7 @@ export class MagPiAcpAgent implements ACPAgent {
     const clientCapabilities = asRecord(params.clientCapabilities);
     const clientMeta = asRecord(clientCapabilities?._meta);
 
-    return Promise.resolve({
+    return {
       agentCapabilities: {
         _meta: {
           [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,
@@ -1297,7 +1337,7 @@ export class MagPiAcpAgent implements ACPAgent {
       }),
       protocolVersion:
         requested === supportedVersion ? requested : supportedVersion,
-    });
+    };
   }
 
   async newSession(params: NewSessionRequest) {
@@ -1330,7 +1370,7 @@ export class MagPiAcpAgent implements ACPAgent {
         .then((value) => {
           state = value;
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
           stateErr = error;
           state = null;
         }),
@@ -1339,7 +1379,7 @@ export class MagPiAcpAgent implements ACPAgent {
         .then((value) => {
           availableModels = value;
         })
-        .catch((error) => {
+        .catch((error: unknown) => {
           availableModelsErr = error;
           availableModels = null;
         }),
@@ -1347,12 +1387,12 @@ export class MagPiAcpAgent implements ACPAgent {
 
     const availableModelsAuthErr = maybeAuthRequiredError(availableModelsErr);
 
-    if (availableModelsAuthErr) {
+    if (availableModelsAuthErr !== null) {
       this.cleanupFailedNewSession(session.sessionId, state);
       throw availableModelsAuthErr;
     }
 
-    if (availableModelsErr) {
+    if (availableModelsErr !== null) {
       this.cleanupFailedNewSession(session.sessionId, state);
       throw RequestError.internalError({}, errorMessage(availableModelsErr));
     }
@@ -1369,7 +1409,7 @@ export class MagPiAcpAgent implements ACPAgent {
       );
     }
 
-    if (stateErr && maybeAuthRequiredError(stateErr)) {
+    if (stateErr !== null && maybeAuthRequiredError(stateErr) !== null) {
       this.cleanupFailedNewSession(session.sessionId, state);
       throw RequestError.authRequired(
         { authMethods: getAuthMethods() },
@@ -1392,10 +1432,13 @@ export class MagPiAcpAgent implements ACPAgent {
     // the "New version available" notice (if any) since it's high-signal and actionable.
     let preludeText = buildStartupInfo({ updateNotice });
     if (quietStartup) {
-      preludeText = updateNotice ? `${updateNotice}\n` : "";
+      preludeText =
+        updateNotice === null || updateNotice.length === 0
+          ? ""
+          : `${updateNotice}\n`;
     }
 
-    if (preludeText) {
+    if (preludeText.length > 0) {
       session.setStartupInfo(preludeText);
 
       // Policy: within a single ACP connection (one client window), keep only one live pi subprocess.
@@ -1416,7 +1459,7 @@ export class MagPiAcpAgent implements ACPAgent {
     // Try to send it immediately after session/new returns; if the client ignores it,
     // it will still be emitted as the first chunk of the first prompt.
     setTimeout(() => {
-      if (preludeText) {
+      if (preludeText.length > 0) {
         session.sendStartupInfoIfPending();
       }
       void session.sendUsageUpdate();
@@ -1450,12 +1493,12 @@ export class MagPiAcpAgent implements ACPAgent {
     return response;
   }
 
-  authenticate(params: AuthenticateRequest): Promise<void> {
+  async authenticate(params: AuthenticateRequest): Promise<void> {
     // Terminal Auth is handled out-of-band by re-launching the binary with `--terminal-login`.
     // If the client calls `authenticate` anyway, we can no-op successfully.
     void params;
     void this.conn;
-    return Promise.resolve();
+    await Promise.resolve();
   }
 
   async prompt(params: PromptRequest): Promise<PromptResponse> {
@@ -1482,7 +1525,7 @@ export class MagPiAcpAgent implements ACPAgent {
 
   async cancel(params: CancelNotification): Promise<void> {
     const session = this.sessions.maybeGet(params.sessionId);
-    if (!session) {
+    if (session === undefined) {
       return;
     }
     await session.cancel();
@@ -1494,7 +1537,7 @@ export class MagPiAcpAgent implements ACPAgent {
     const rawEntryId = params._meta?.[MAGPI_ACP_FORK_ENTRY_ID_META];
     if (
       rawEntryId !== undefined &&
-      (typeof rawEntryId !== "string" || !rawEntryId.trim())
+      (typeof rawEntryId !== "string" || rawEntryId.trim().length === 0)
     ) {
       throw RequestError.invalidParams(
         "Fork entry ID must be a non-empty string."
@@ -1502,8 +1545,8 @@ export class MagPiAcpAgent implements ACPAgent {
     }
     const entryId = typeof rawEntryId === "string" ? rawEntryId : undefined;
     const source = await this.restoreSession(params.sessionId);
-    const state = (await source.proc.getState()) as { sessionFile?: unknown };
-    if (typeof state.sessionFile !== "string") {
+    const state = asRecord(await source.proc.getState());
+    if (typeof state?.sessionFile !== "string") {
       throw RequestError.internalError(
         {},
         "Pi did not return the source session file."
@@ -1522,19 +1565,11 @@ export class MagPiAcpAgent implements ACPAgent {
     method: string,
     params: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
-    if (
-      ![
-        MAGPI_ACP_FORK_MESSAGES_METHOD,
-        MAGPI_ACP_TREE_METHOD,
-        MAGPI_ACP_NAVIGATE_TREE_METHOD,
-      ].includes(method)
-    ) {
-      throw RequestError.methodNotFound(method);
-    }
+    assertKnownExtensionMethod(method);
 
     const sessionId =
       typeof params.sessionId === "string" ? params.sessionId : null;
-    if (!sessionId) {
+    if (sessionId === null || sessionId.length === 0) {
       throw RequestError.invalidParams("sessionId is required.");
     }
 
@@ -1549,37 +1584,31 @@ export class MagPiAcpAgent implements ACPAgent {
 
     if (method === MAGPI_ACP_NAVIGATE_TREE_METHOD) {
       const entryId =
-        typeof params.entryId === "string" && params.entryId.trim()
+        typeof params.entryId === "string" && params.entryId.trim().length > 0
           ? params.entryId
           : null;
-      if (!entryId) {
+      if (entryId === null) {
         throw RequestError.invalidParams("entryId is required.");
       }
 
       const before = await session.proc.getTree();
       const entry = findTreeMessage(before.tree, entryId);
-      if (!entry) {
+      if (entry === null) {
         throw RequestError.invalidParams(
           `Pi tree message not found: ${entryId}`
         );
       }
 
-      const identity = (await session.proc.getState()) as {
-        sessionFile?: unknown;
-        sessionId?: unknown;
-      };
+      const identity = asRecord(await session.proc.getState());
       await session.proc.navigateTree(entryId);
       const [after, nextState] = await Promise.all([
         session.proc.getTree(),
         session.proc.getState(),
       ]);
-      const nextIdentity = nextState as {
-        sessionFile?: unknown;
-        sessionId?: unknown;
-      };
+      const nextIdentity = asRecord(nextState);
       if (
-        nextIdentity.sessionFile !== identity.sessionFile ||
-        nextIdentity.sessionId !== identity.sessionId
+        nextIdentity?.sessionFile !== identity?.sessionFile ||
+        nextIdentity?.sessionId !== identity?.sessionId
       ) {
         throw RequestError.internalError(
           {},
@@ -1600,20 +1629,27 @@ export class MagPiAcpAgent implements ACPAgent {
     throw RequestError.methodNotFound(method);
   }
 
-  listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
+  async listSessions(
+    params: ListSessionsRequest
+  ): Promise<ListSessionsResponse> {
+    await Promise.resolve();
     // Filter by cwd when provided; otherwise use the latest session cwd for a project-scoped picker.
     const all = listPiSessions();
 
     const requestedCwd = asRecord(params)?.cwd;
     const effectiveCwd =
       typeof requestedCwd === "string" ? requestedCwd : this.lastSessionCwd;
-    const filtered = effectiveCwd
-      ? all.filter((s) => s.cwd === effectiveCwd)
-      : all;
+    const filtered =
+      effectiveCwd === null || effectiveCwd.length === 0
+        ? all
+        : all.filter((session) => session.cwd === effectiveCwd);
 
     // Cursor-based pagination (opaque cursor). For MVP, we use a simple numeric offset.
     // If cursor is invalid, treat as 0.
-    const offset = params.cursor ? Math.trunc(Number(params.cursor)) : 0;
+    const offset =
+      params.cursor === null || params.cursor === undefined
+        ? 0
+        : Math.trunc(Number(params.cursor));
     const start = Number.isFinite(offset) && offset > 0 ? offset : 0;
 
     const PAGE_SIZE = 50;
@@ -1624,7 +1660,7 @@ export class MagPiAcpAgent implements ACPAgent {
       sessionId: s.sessionId,
       title: s.title,
       updatedAt: s.updatedAt,
-      ...(s.preview && s.previewRole
+      ...(s.preview !== null && s.previewRole !== null
         ? {
             _meta: {
               magPiAcp: { preview: s.preview, previewRole: s.previewRole },
@@ -1636,7 +1672,7 @@ export class MagPiAcpAgent implements ACPAgent {
     const nextCursor =
       start + PAGE_SIZE < filtered.length ? String(start + PAGE_SIZE) : null;
 
-    return Promise.resolve({ nextCursor, sessions });
+    return { nextCursor, sessions };
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
@@ -1648,7 +1684,7 @@ export class MagPiAcpAgent implements ACPAgent {
 
     this.sessions.close(params.sessionId);
     const stored = findPiSession(params.sessionId);
-    if (!stored) {
+    if (stored === null) {
       throw RequestError.invalidParams(
         `Unknown sessionId: ${params.sessionId}`
       );
@@ -1668,7 +1704,7 @@ export class MagPiAcpAgent implements ACPAgent {
       messages,
       restoredToolArguments(messages)
     );
-    if (todoPlan) {
+    if (todoPlan !== undefined) {
       await this.conn.sessionUpdate({
         sessionId: session.sessionId,
         update: { entries: todoPlan, sessionUpdate: "plan" },
@@ -1696,7 +1732,7 @@ export class MagPiAcpAgent implements ACPAgent {
   ): Promise<SetSessionModeResponse> {
     const session = await this.restoreSession(params.sessionId);
 
-    const mode = String(params.modeId);
+    const mode = params.modeId;
     if (!isThinkingLevel(mode)) {
       throw RequestError.invalidParams(`Unknown modeId: ${mode}`);
     }
@@ -1721,7 +1757,7 @@ export class MagPiAcpAgent implements ACPAgent {
     params: SetSessionConfigOptionRequest
   ): Promise<SetSessionConfigOptionResponse> {
     const session = await this.restoreSession(params.sessionId);
-    const configId = String(params.configId);
+    const { configId } = params;
 
     if (typeof params.value !== "string") {
       throw RequestError.invalidParams(
@@ -1735,7 +1771,7 @@ export class MagPiAcpAgent implements ACPAgent {
       const selectedRole = getRoles().find(
         (candidate) => candidate.id === params.value
       );
-      if (!selectedRole) {
+      if (selectedRole === undefined) {
         throw RequestError.invalidParams(`Unknown role: ${params.value}`);
       }
 

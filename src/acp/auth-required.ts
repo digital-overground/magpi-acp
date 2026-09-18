@@ -1,5 +1,6 @@
 import { RequestError } from "@agentclientprotocol/sdk";
 
+import { errorMessage } from "../unknown.js";
 import { getAuthMethods } from "./auth.js";
 
 /**
@@ -8,9 +9,7 @@ import { getAuthMethods } from "./auth.js";
  * We can't do a full provider-specific check here, so we look for common substrings.
  */
 export const maybeAuthRequiredError = (err: unknown): RequestError | null => {
-  const error = err as { message?: unknown } | null;
-  const msg = String(error?.message ?? err ?? "");
-  const s = msg.toLowerCase();
+  const s = errorMessage(err).toLowerCase();
 
   const patterns = [
     "api key",

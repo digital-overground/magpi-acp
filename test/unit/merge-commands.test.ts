@@ -15,7 +15,7 @@ const mergeCommands = (a: { name: string }[], b: { name: string }[]) => {
   return out;
 };
 
-test("mergeCommands: preserves order and de-dupes (first wins)", () => {
+void test("mergeCommands: preserves order and de-dupes (first wins)", () => {
   const res = mergeCommands(
     [{ name: "a" }, { name: "b" }],
     [{ name: "b" }, { name: "c" }]

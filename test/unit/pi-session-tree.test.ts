@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { activeSessionMessages } from "../../src/acp/pi-session-tree.js";
 
-test("activeSessionMessages returns only messages on the latest branch", () => {
+void test("activeSessionMessages returns only messages on the latest branch", () => {
   const directory = mkdtempSync(path.join(tmpdir(), "magpi-acp-tree-"));
   const sessionFile = path.join(directory, "session.jsonl");
   const entries = [

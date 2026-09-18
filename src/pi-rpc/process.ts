@@ -5,8 +5,8 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
+import { asRecord, errorMessage } from "../unknown.js";
 import { getPiCommand, shouldUseShellForPiCommand } from "./command.js";
 import { PiRpcSpawnError } from "./spawn-error.js";
 import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from "./tree-command.js";
@@ -24,11 +24,6 @@ const ANSI_ESCAPE_REGEX = new RegExp(
 const stripAnsi = (s: string): string =>
   // Basic ANSI escape stripping (colors, cursor movement, etc.)
   s.replace(ANSI_ESCAPE_REGEX, "");
-
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : undefined;
 
 type PiRpcCommand =
   | { type: "prompt"; id?: string; message: string; images?: unknown[] }
@@ -72,6 +67,26 @@ interface PiRpcResponse {
   error?: string;
 }
 
+const toPiRpcResponse = (
+  value: Record<string, unknown> | undefined
+): PiRpcResponse | undefined => {
+  if (
+    value?.type !== "response" ||
+    typeof value.command !== "string" ||
+    typeof value.success !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    command: value.command,
+    success: value.success,
+    type: "response",
+    ...(typeof value.id === "string" ? { id: value.id } : {}),
+    ...(typeof value.error === "string" ? { error: value.error } : {}),
+    ...(Object.hasOwn(value, "data") ? { data: value.data } : {}),
+  };
+};
+
 interface PendingResponse {
   events: EventTarget;
   value?: { response?: PiRpcResponse; error?: unknown };
@@ -99,6 +114,60 @@ export interface PiSessionTreeNode {
   label?: string;
   labelTimestamp?: string;
 }
+
+const toPiForkMessage = (value: unknown): PiForkMessage[] => {
+  const message = asRecord(value);
+  return typeof message?.entryId === "string" &&
+    typeof message.text === "string"
+    ? [{ entryId: message.entryId, text: message.text }]
+    : [];
+};
+
+const toPiSessionTreeNode = (value: unknown): PiSessionTreeNode[] => {
+  const node = asRecord(value);
+  if (node === undefined) {
+    return [];
+  }
+  const rawEntry = asRecord(node.entry);
+  if (
+    rawEntry === undefined ||
+    typeof rawEntry.id !== "string" ||
+    typeof rawEntry.type !== "string"
+  ) {
+    return [];
+  }
+  const rawMessage = asRecord(rawEntry.message);
+  const entry: PiSessionEntry = {
+    ...rawEntry,
+    id: rawEntry.id,
+    type: rawEntry.type,
+    ...(rawMessage === undefined
+      ? {}
+      : {
+          message: {
+            ...(typeof rawMessage.role === "string"
+              ? { role: rawMessage.role }
+              : {}),
+            ...(Object.hasOwn(rawMessage, "content")
+              ? { content: rawMessage.content }
+              : {}),
+          },
+        }),
+  };
+  const children = Array.isArray(node.children)
+    ? node.children.flatMap(toPiSessionTreeNode)
+    : [];
+  return [
+    {
+      children,
+      entry,
+      ...(typeof node.label === "string" ? { label: node.label } : {}),
+      ...(typeof node.labelTimestamp === "string"
+        ? { labelTimestamp: node.labelTimestamp }
+        : {}),
+    },
+  ];
+};
 
 interface SpawnParams {
   cwd: string;
@@ -137,9 +206,11 @@ export class PiRpcProcess {
 
   private constructor(child: ChildProcessWithoutNullStreams) {
     this.child = child;
-    this.writeToStdin = promisify(child.stdin.write.bind(child.stdin)) as (
-      line: string
-    ) => Promise<void>;
+    this.writeToStdin = async (line: string): Promise<void> => {
+      if (!child.stdin.write(line)) {
+        await once(child.stdin, "drain");
+      }
+    };
 
     const rl = readline.createInterface({ input: child.stdout });
     rl.on("line", (line) => {
@@ -152,26 +223,22 @@ export class PiRpcProcess {
       } catch {
         // pi may emit a human-readable prelude on stdout before NDJSON starts.
         // Capture it so the ACP adapter can surface it on session start.
-        const cleaned = stripAnsi(String(line)).trimEnd();
-        if (cleaned) {
+        const cleaned = stripAnsi(line).trimEnd();
+        if (cleaned.length > 0) {
           this.preludeLines.push(cleaned);
         }
         return;
       }
 
       const record = asRecord(msg);
-      if (record?.type === "response") {
-        const id = typeof record.id === "string" ? record.id : undefined;
-        if (id) {
-          const pending = this.pending.get(id);
-          if (pending) {
-            this.pending.delete(id);
-            pending.value = {
-              response: record as unknown as PiRpcResponse,
-            };
-            pending.events.dispatchEvent(new Event("response"));
-            return;
-          }
+      const response = toPiRpcResponse(record);
+      if (response !== undefined && response.id !== undefined) {
+        const pending = this.pending.get(response.id);
+        if (pending !== undefined) {
+          this.pending.delete(response.id);
+          pending.value = { response };
+          pending.events.dispatchEvent(new Event("response"));
+          return;
         }
       }
 
@@ -207,7 +274,7 @@ export class PiRpcProcess {
       "--extension",
       treeExtensionPath(),
     ];
-    if (params.sessionPath) {
+    if (params.sessionPath !== undefined) {
       args.push("--session", params.sessionPath);
     }
 
@@ -260,7 +327,7 @@ export class PiRpcProcess {
       const state = asRecord(await proc.getState());
       const sessionFile =
         typeof state?.sessionFile === "string" ? state.sessionFile : null;
-      if (sessionFile) {
+      if (sessionFile !== null && sessionFile.length > 0) {
         mkdirSync(path.dirname(sessionFile), { recursive: true });
       }
     } catch {
@@ -313,7 +380,7 @@ export class PiRpcProcess {
         `pi fork failed: ${res.error ?? JSON.stringify(res.data)}`
       );
     }
-    if ((res.data as { cancelled?: unknown } | undefined)?.cancelled === true) {
+    if (asRecord(res.data)?.cancelled === true) {
       throw new Error("Pi cancelled the fork.");
     }
   }
@@ -325,7 +392,7 @@ export class PiRpcProcess {
         `pi clone failed: ${res.error ?? JSON.stringify(res.data)}`
       );
     }
-    if ((res.data as { cancelled?: unknown } | undefined)?.cancelled === true) {
+    if (asRecord(res.data)?.cancelled === true) {
       throw new Error("Pi cancelled the clone.");
     }
   }
@@ -337,8 +404,8 @@ export class PiRpcProcess {
         `pi get_fork_messages failed: ${res.error ?? JSON.stringify(res.data)}`
       );
     }
-    const messages = (res.data as { messages?: unknown } | undefined)?.messages;
-    return Array.isArray(messages) ? (messages as PiForkMessage[]) : [];
+    const messages = asRecord(res.data)?.messages;
+    return Array.isArray(messages) ? messages.flatMap(toPiForkMessage) : [];
   }
 
   async getTree(): Promise<{
@@ -351,7 +418,12 @@ export class PiRpcProcess {
         `pi get_tree failed: ${res.error ?? JSON.stringify(res.data)}`
       );
     }
-    return res.data as { tree: PiSessionTreeNode[]; leafId: string | null };
+    const data = asRecord(res.data);
+    const tree = Array.isArray(data?.tree)
+      ? data.tree.flatMap(toPiSessionTreeNode)
+      : [];
+    const leafId = typeof data?.leafId === "string" ? data.leafId : null;
+    return { leafId, tree };
   }
 
   async navigateTree(entryId: string): Promise<void> {
@@ -360,7 +432,9 @@ export class PiRpcProcess {
     const unsubscribe = this.onEvent((event) => {
       if (event.type === "extension_error") {
         failure = new Error(
-          String(event.error ?? "Pi tree navigation extension failed.")
+          event.error === undefined
+            ? "Pi tree navigation extension failed."
+            : errorMessage(event.error)
         );
       }
       if (event.type === "agent_settled") {
@@ -494,7 +568,7 @@ export class PiRpcProcess {
       );
     }
     const data = asRecord(res.data);
-    return { path: String(data?.path ?? "") };
+    return { path: typeof data?.path === "string" ? data.path : "" };
   }
 
   async switchSession(sessionPath: string): Promise<void> {
@@ -553,15 +627,17 @@ export class PiRpcProcess {
       await this.writeLine(line);
       await responsePromise;
       if (pending.value?.error !== undefined) {
-        throw pending.value.error;
+        throw pending.value.error instanceof Error
+          ? pending.value.error
+          : new Error(errorMessage(pending.value.error));
       }
       if (pending.value?.response === undefined) {
         throw new Error("Pi returned an invalid RPC response.");
       }
       return pending.value.response;
-    } catch (error) {
+    } catch (error: unknown) {
       this.pending.delete(id);
-      throw error;
+      throw error instanceof Error ? error : new Error(errorMessage(error));
     }
   }
 

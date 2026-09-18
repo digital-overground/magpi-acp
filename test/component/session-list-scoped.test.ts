@@ -5,9 +5,13 @@ import path from "node:path";
 import test from "node:test";
 
 import { MagPiAcpAgent } from "../../src/acp/agent.js";
-import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
+import {
+  FakeAgentSideConnection,
+  asAgentConn,
+  replaceProperty,
+} from "../helpers/fakes.js";
 
-test("MagPiAcpAgent: listSessions defaults to lastSessionCwd when cwd param is omitted", async () => {
+void test("MagPiAcpAgent: listSessions defaults to lastSessionCwd when cwd param is omitted", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-test-"));
 
   const dirA = path.join(root, "sessions", "--a--");
@@ -58,9 +62,9 @@ test("MagPiAcpAgent: listSessions defaults to lastSessionCwd when cwd param is o
     const conn = new FakeAgentSideConnection();
     const agent = new MagPiAcpAgent(asAgentConn(conn));
 
-    (agent as unknown as { lastSessionCwd: string }).lastSessionCwd = "/cwd/a";
+    replaceProperty(agent, "lastSessionCwd", "/cwd/a");
 
-    const listed = await agent.listSessions({} as never);
+    const listed = await agent.listSessions({});
     assert.equal(listed.sessions.length, 1);
     assert.equal(listed.sessions[0]?.sessionId, "sess-a");
   } finally {

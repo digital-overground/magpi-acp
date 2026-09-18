@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { listPiSessions } from "../../src/acp/pi-sessions.js";
 
-test("listPiSessions: updatedAt prefers last message timestamp over later non-message entries", () => {
+void test("listPiSessions: updatedAt prefers last message timestamp over later non-message entries", () => {
   const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-test-"));
   const sessionsDir = path.join(root, "sessions", "--p--");
   mkdirSync(sessionsDir, { recursive: true });

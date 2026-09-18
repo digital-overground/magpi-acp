@@ -11,6 +11,8 @@ import type { Dirent } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { asRecord } from "../unknown.js";
+
 export interface PiSessionListItem {
   sessionId: string;
   cwd: string;
@@ -24,20 +26,17 @@ export interface PiSessionListItem {
 const DEFAULT_TAIL_BYTES = 256 * 1024;
 const DEFAULT_HEAD_BYTES = 64 * 1024;
 
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-
 const parseRecord = (value: string): Record<string, unknown> | undefined =>
   asRecord(JSON.parse(value) as unknown);
 
-const getPiAgentDir = (): string =>
+const getPiAgentDir = (): string => {
   // pi supports overriding config dir via PI_CODING_AGENT_DIR.
   // See pi README.
-  process.env.PI_CODING_AGENT_DIR
-    ? path.resolve(process.env.PI_CODING_AGENT_DIR)
-    : path.join(homedir(), ".pi", "agent");
+  const configured = process.env.PI_CODING_AGENT_DIR;
+  return configured === undefined
+    ? path.join(homedir(), ".pi", "agent")
+    : path.resolve(configured);
+};
 
 const readSessionDirFromSettings = (agentDir: string): string | null => {
   const settingsPath = path.join(agentDir, "settings.json");
@@ -47,11 +46,12 @@ const readSessionDirFromSettings = (agentDir: string): string | null => {
     }
     const raw = readFileSync(settingsPath, "utf-8");
     const data = JSON.parse(raw) as unknown;
-    if (!data || typeof data !== "object" || Array.isArray(data)) {
+    const record = asRecord(data);
+    if (record === undefined) {
       return null;
     }
 
-    const { sessionDir } = data as Record<string, unknown>;
+    const { sessionDir } = record;
     if (typeof sessionDir !== "string" || !sessionDir.trim()) {
       return null;
     }
@@ -71,8 +71,8 @@ export const getPiSessionsDir = (): string => {
   );
 };
 
-const walkJsonlFiles = (dir: string, out: string[]) => {
-  let entries: Dirent<string>[];
+const walkJsonlFiles = (dir: string, out: string[]): void => {
+  let entries: Dirent[];
   try {
     // Force string names.
     entries = readdirSync(dir, {
@@ -146,7 +146,7 @@ const parseSessionHeader = (
     }
     const sessionId = typeof obj?.id === "string" ? obj.id : null;
     const cwd = typeof obj?.cwd === "string" ? obj.cwd : null;
-    if (!sessionId || !cwd) {
+    if (sessionId === null || cwd === null) {
       return null;
     }
     return { cwd, sessionId };
@@ -269,7 +269,9 @@ const messageText = (content: unknown): string | null => {
     .split("\n[Embedded Context] ", 1)[0]
     ?.replaceAll(/\s+/gu, " ")
     .trim();
-  return preview ? preview.slice(0, 160) : null;
+  return preview !== undefined && preview.length > 0
+    ? preview.slice(0, 160)
+    : null;
 };
 
 const pickPreviewFromTail = (
@@ -278,20 +280,16 @@ const pickPreviewFromTail = (
   const messages: { preview: string; previewRole: "user" | "assistant" }[] = [];
   for (const line of tail.split(/\r?\n/u)) {
     try {
-      const entry = JSON.parse(line) as Record<string, unknown>;
-      if (
-        entry.type !== "message" ||
-        !entry.message ||
-        typeof entry.message !== "object"
-      ) {
+      const entry = asRecord(JSON.parse(line) as unknown);
+      const message = asRecord(entry?.message);
+      if (entry?.type !== "message" || message === undefined) {
         continue;
       }
-      const message = entry.message as Record<string, unknown>;
       if (message.role !== "user" && message.role !== "assistant") {
         continue;
       }
       const preview = messageText(message.content);
-      if (preview) {
+      if (preview !== null) {
         messages.push({ preview, previewRole: message.role });
       }
     } catch {
@@ -362,7 +360,7 @@ const pickFallbackTitleFromHead = (filePath: string): string | null => {
                 textBlock?.type === "text" &&
                 typeof textBlock.text === "string"
               ) {
-                if (textBlock.text) {
+                if (textBlock.text.length > 0) {
                   return textBlock.text.slice(0, 80);
                 }
                 break;
@@ -397,11 +395,11 @@ export const listPiSessions = (): PiSessionListItem[] => {
 
   for (const file of files) {
     const first = readFirstLine(file);
-    if (!first) {
+    if (first === null || first.length === 0) {
       continue;
     }
     const header = parseSessionHeader(first);
-    if (!header) {
+    if (header === null) {
       continue;
     }
 
@@ -422,12 +420,10 @@ export const listPiSessions = (): PiSessionListItem[] => {
     }
 
     // If the session was named early and grew large, it may fall outside of the tail window.
-    if (!title) {
-      title = scanSessionInfoNameFromFile(file);
-    }
+    title ??= scanSessionInfoNameFromFile(file);
 
     // Fallback for updatedAt when we couldn't parse timestamps from tail.
-    if (!updatedAt) {
+    if (updatedAt === null) {
       try {
         updatedAt = statSync(file).mtime.toISOString();
       } catch {
@@ -435,9 +431,7 @@ export const listPiSessions = (): PiSessionListItem[] => {
       }
     }
 
-    if (!title) {
-      title = pickFallbackTitleFromHead(file);
-    }
+    title ??= pickFallbackTitleFromHead(file);
 
     items.push({
       cwd: header.cwd,

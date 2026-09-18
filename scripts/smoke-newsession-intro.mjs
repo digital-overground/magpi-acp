@@ -1,52 +1,75 @@
 import { spawn } from "node:child_process";
 
+import {
+  chunkToString,
+  hasMessageId,
+  objectProperty,
+  parseJsonObject,
+  responseSessionId,
+  sendJson,
+} from "./smoke-helpers.mjs";
+
 const p = spawn("node", ["dist/index.js"], {
   stdio: ["pipe", "pipe", "inherit"],
 });
 
 let buf = "";
+/** @type {string | null} */
 let sid = null;
 let gotIntro = false;
 
-p.stdout.on("data", (d) => {
-  buf += d.toString("utf-8");
-  let idx;
-  while ((idx = buf.indexOf("\n")) >= 0) {
-    const line = buf.slice(0, idx);
-    buf = buf.slice(idx + 1);
-    if (!line.trim()) {
-      continue;
-    }
-    const msg = JSON.parse(line);
+p.stdout.on(
+  "data",
+  /** @param {unknown} chunk - Subprocess output chunk. */
+  (chunk) => {
+    buf += chunkToString(chunk);
+    let idx;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx);
+      buf = buf.slice(idx + 1);
+      if (!line.trim()) {
+        continue;
+      }
+      const msg = parseJsonObject(line);
+      if (msg === null) {
+        throw new Error("Agent emitted an invalid JSON object");
+      }
 
-    if (msg.id === 2) {
-      sid = msg.result?.sessionId;
-      console.log(
-        "session/new response uses standard fields only:",
-        !("_meta" in msg.result)
-      );
-    }
+      if (hasMessageId(msg, 2)) {
+        sid = responseSessionId(msg);
+        const result = objectProperty(msg, "result");
+        console.log(
+          "session/new response uses standard fields only:",
+          result !== null && !("_meta" in result)
+        );
+      }
 
-    if (msg.method === "session/update") {
-      const up = msg.params?.update;
-      if (
-        up?.sessionUpdate === "agent_message_chunk" &&
-        up?.content?.type === "text"
-      ) {
-        const t = String(up.content.text);
-        if (t.startsWith("MagPi v") && /\npi v/u.test(t)) {
-          gotIntro = true;
-          console.log("OK: got intro via session/update (before any prompt)");
-          p.kill("SIGTERM");
-          process.exit(0);
+      if (msg.method === "session/update") {
+        const params = objectProperty(msg, "params");
+        const update =
+          params === null ? null : objectProperty(params, "update");
+        const content =
+          update === null ? null : objectProperty(update, "content");
+        if (
+          update?.sessionUpdate === "agent_message_chunk" &&
+          content?.type === "text"
+        ) {
+          const text = String(content.text);
+          if (text.startsWith("MagPi v") && /\npi v/u.test(text)) {
+            gotIntro = true;
+            console.log("OK: got intro via session/update (before any prompt)");
+            p.kill("SIGTERM");
+            process.exit(0);
+          }
         }
       }
     }
   }
-});
+);
 
-const send = (obj) => {
-  p.stdin.write(`${JSON.stringify(obj)}\n`);
+/** @param {unknown} object - JSON-compatible request. */
+const send = (object) => {
+  sendJson(p.stdin, object);
 };
 
 send({
