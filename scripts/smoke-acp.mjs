@@ -23,7 +23,7 @@ function send(obj) {
   child.stdin.write(JSON.stringify(obj) + '\n')
 }
 
-// Basic ACP handshake + one prompt.
+// Basic metadata-free ACP handshake, prompt, fork, and load.
 send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1 } })
 send({ jsonrpc: '2.0', id: 2, method: 'session/new', params: { cwd: cwd, mcpServers: [] } })
 
@@ -58,8 +58,23 @@ child.stdout.on('data', chunk => {
     }
 
     if (msg?.id === 3) {
-      // Turn finished.
-      setTimeout(() => child.kill('SIGTERM'), 50)
+      send({
+        jsonrpc: '2.0',
+        id: 4,
+        method: 'session/fork',
+        params: { sessionId, cwd, mcpServers: [] }
+      })
     }
+
+    if (msg?.id === 4 && msg?.result?.sessionId) {
+      send({
+        jsonrpc: '2.0',
+        id: 5,
+        method: 'session/load',
+        params: { sessionId: msg.result.sessionId, cwd, mcpServers: [] }
+      })
+    }
+
+    if (msg?.id === 5) setTimeout(() => child.kill('SIGTERM'), 50)
   }
 })

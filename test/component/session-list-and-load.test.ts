@@ -127,9 +127,9 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
         .filter(Boolean)
         .map(u => ({ kind: u.sessionUpdate, messageId: u.messageId, text: u.content?.text }))
 
-      assert.ok(texts.some(t => t.kind === 'user_message_chunk' && t.messageId === 'a1b2c3d4' && t.text === 'Hello'))
+      assert.ok(texts.some(t => t.kind === 'user_message_chunk' && t.messageId === undefined && t.text === 'Hello'))
       assert.ok(
-        texts.some(t => t.kind === 'agent_message_chunk' && t.messageId === 'b2c3d4e5' && t.text === 'Hi there!')
+        texts.some(t => t.kind === 'agent_message_chunk' && t.messageId === undefined && t.text === 'Hi there!')
       )
       assert.deepEqual(conn.updates.find(update => update.update.sessionUpdate === 'plan')?.update, {
         sessionUpdate: 'plan',

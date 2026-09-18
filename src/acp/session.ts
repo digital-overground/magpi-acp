@@ -13,7 +13,6 @@ import { RequestError } from '@agentclientprotocol/sdk'
 import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve as resolvePath } from 'node:path'
 import { PiRpcProcess, PiRpcSpawnError, type PiRpcEvent } from '../pi-rpc/process.js'
-import { MAGPI_ACP_TREE_SELECTION_TITLE, MAGPI_ACP_TREE_SUMMARY_TITLE } from '../pi-rpc/tree-command.js'
 import { maybeAuthRequiredError } from './auth-required.js'
 import { SessionStore } from './session-store.js'
 import { expandSlashCommand, type FileSlashCommand } from './slash-commands.js'
@@ -49,7 +48,6 @@ type PendingTurn = {
 type QueuedTurn = {
   message: string
   images: unknown[]
-  clientMessageId?: string
   resolve: (reason: StopReason) => void
   reject: (err: unknown) => void
 }
@@ -253,7 +251,7 @@ export class SessionManager {
   }
 
   async fork(params: {
-    clientMessageId: string
+    entryId?: string
     cwd: string
     piCommand?: string
     sourceSessionFile: string
@@ -264,7 +262,15 @@ export class SessionManager {
       sessionPath: params.sourceSessionFile
     })
     try {
-      await proc.forkClientMessage(params.clientMessageId)
+      if (params.entryId) {
+        const messages = await proc.getForkMessages()
+        if (!messages.some(message => message.entryId === params.entryId)) {
+          throw RequestError.invalidParams(`Pi entry is not forkable: ${params.entryId}`)
+        }
+        await proc.fork(params.entryId)
+      } else {
+        await proc.clone()
+      }
       const state = (await proc.getState()) as {
         sessionFile?: unknown
         sessionId?: unknown
@@ -443,12 +449,12 @@ export class MagPiAcpSession {
     }
   }
 
-  async prompt(message: string, images: unknown[] = [], clientMessageId?: string): Promise<StopReason> {
+  async prompt(message: string, images: unknown[] = []): Promise<StopReason> {
     // pi RPC mode disables slash command expansion, so we do it here.
     const expandedMessage = expandSlashCommand(message, this.fileCommands)
 
     const turnPromise = new Promise<StopReason>((resolve, reject) => {
-      const queued: QueuedTurn = { message: expandedMessage, images, clientMessageId, resolve, reject }
+      const queued: QueuedTurn = { message: expandedMessage, images, resolve, reject }
 
       // If a turn is already running, enqueue.
       if (this.pendingTurn) {
@@ -594,9 +600,7 @@ export class MagPiAcpSession {
 
     // Kick off pi, but completion is determined by pi events, not the RPC response.
     // Pi may emit multiple low-level runs; the full prompt ends at `agent_settled`.
-    const prompt = t.clientMessageId
-      ? this.proc.markClientMessage(t.clientMessageId).then(() => this.proc.prompt(t.message, t.images))
-      : this.proc.prompt(t.message, t.images)
+    const prompt = this.proc.prompt(t.message, t.images)
 
     prompt.catch(err => {
       // If the subprocess errors before we get an `agent_settled`, treat as error unless cancelled.
@@ -634,11 +638,9 @@ export class MagPiAcpSession {
 
         // Stream assistant text.
         if (ame?.type === 'text_delta' && typeof ame.delta === 'string') {
-          const timestamp = ame.partial?.timestamp
           this.emit({
             sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: ame.delta } satisfies ContentBlock,
-            ...(typeof timestamp === 'number' && Number.isFinite(timestamp) ? { messageId: String(timestamp) } : {})
+            content: { type: 'text', text: ame.delta } satisfies ContentBlock
           })
           break
         }
@@ -1043,9 +1045,7 @@ export class MagPiAcpSession {
       return
     }
 
-    const title = stringProp(ev, 'title')
-    const isStrictTreeSelection = title === MAGPI_ACP_TREE_SELECTION_TITLE || title === MAGPI_ACP_TREE_SUMMARY_TITLE
-    const choices = isStrictTreeSelection ? options : options.filter(option => !FREEFORM_CHOICE_RE.test(option))
+    const choices = options.filter(option => !FREEFORM_CHOICE_RE.test(option))
     const properties: NonNullable<ElicitationSchema['properties']> = {}
 
     if (choices.length) {
@@ -1063,12 +1063,10 @@ export class MagPiAcpSession {
       }
     }
 
-    if (!isStrictTreeSelection) {
-      properties[ELICITATION_OTHER_FIELD] = {
-        type: 'string',
-        title: 'Custom response',
-        description: 'Optional. Add a custom answer or context for the selected suggestion.'
-      }
+    properties[ELICITATION_OTHER_FIELD] = {
+      type: 'string',
+      title: 'Custom response',
+      description: 'Optional. Add a custom answer or context for the selected suggestion.'
     }
 
     const response = await this.requestExtensionElicitation(
@@ -1076,8 +1074,7 @@ export class MagPiAcpSession {
       {
         type: 'object',
         ...(this.activeAskUser?.context ? { description: this.activeAskUser.context } : {}),
-        properties,
-        ...(isStrictTreeSelection ? { required: [ELICITATION_CHOICE_FIELD] } : {})
+        properties
       },
       this.activeAskUser?.question
     )

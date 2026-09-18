@@ -34,8 +34,6 @@ export class FakePiRpcProcess {
 
   // spies
   readonly prompts: Array<{ message: string; attachments: unknown[] }> = []
-  readonly markedClientMessages: string[] = []
-  readonly rewoundClientMessages: string[] = []
   readonly extensionUiResponses: unknown[] = []
   sessionStats: unknown = {}
   commands: unknown = { commands: [] }
@@ -54,14 +52,6 @@ export class FakePiRpcProcess {
 
   async prompt(message: string, attachments: unknown[] = []): Promise<void> {
     this.prompts.push({ message, attachments })
-  }
-
-  async markClientMessage(clientMessageId: string): Promise<void> {
-    this.markedClientMessages.push(clientMessageId)
-  }
-
-  async rewindClientMessage(clientMessageId: string): Promise<void> {
-    this.rewoundClientMessages.push(clientMessageId)
   }
 
   async abort(): Promise<void> {

@@ -26,7 +26,7 @@ class FakeSessions {
 
 test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', async () => {
   const conn = new FakeAgentSideConnection()
-  const promptCalls: Array<{ message: string; images: unknown[]; clientMessageId?: string }> = []
+  const promptCalls: unknown[][] = []
   const spawnCalls: any[] = []
   const storeUpserts: any[] = []
 
@@ -34,8 +34,8 @@ test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', 
     sessionId,
     cwd: params.cwd,
     proc: params.proc,
-    async prompt(message: string, images: unknown[], clientMessageId?: string) {
-      promptCalls.push({ message, images, clientMessageId })
+    async prompt(...args: unknown[]) {
+      promptCalls.push(args)
       return 'end_turn'
     },
     async cancel() {},
@@ -84,7 +84,7 @@ test('MagPiAcpAgent: prompt auto-restores a missing session from SessionStore', 
         piCommand: process.env.MAGPI_ACP_PI_COMMAND
       }
     ])
-    assert.deepEqual(promptCalls, [{ message: 'hello again', images: [], clientMessageId: 'client-message-1' }])
+    assert.deepEqual(promptCalls, [['hello again', []]])
     assert.deepEqual(storeUpserts, [
       {
         sessionId: 'stored-session',

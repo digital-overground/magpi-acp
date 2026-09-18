@@ -4,7 +4,6 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MagPiAcpSession } from '../../src/acp/session.js'
-import { MAGPI_ACP_TREE_SELECTION_TITLE } from '../../src/pi-rpc/tree-command.js'
 import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
 
 test('MagPiAcpSession: emits agent_message_chunk for text_delta', async () => {
@@ -35,8 +34,7 @@ test('MagPiAcpSession: emits agent_message_chunk for text_delta', async () => {
   assert.equal(conn.updates[0]!.sessionId, 's1')
   assert.deepEqual(conn.updates[0]!.update, {
     sessionUpdate: 'agent_message_chunk',
-    content: { type: 'text', text: 'hi' },
-    messageId: '1700000000000'
+    content: { type: 'text', text: 'hi' }
   })
 })
 
@@ -370,47 +368,6 @@ test('MagPiAcpSession: turns an extension-provided free-form choice into a text 
     }
   })
   assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-freeform', value: 'A custom answer' }])
-})
-
-test('MagPiAcpSession: tree selection elicitation only accepts a listed tree entry', async () => {
-  const conn = new FakeAgentSideConnection()
-  conn.nextElicitationResponse = {
-    action: 'accept',
-    content: { choice: 'You: First request · user-1' }
-  }
-  const proc = new FakePiRpcProcess()
-
-  new MagPiAcpSession({
-    sessionId: 's1',
-    cwd: process.cwd(),
-    mcpServers: [],
-    proc: proc as any,
-    conn: asAgentConn(conn),
-    supportsFormElicitation: true,
-    fileCommands: []
-  })
-
-  proc.emit({
-    type: 'extension_ui_request',
-    id: 'ui-tree',
-    method: 'select',
-    title: MAGPI_ACP_TREE_SELECTION_TITLE,
-    options: ['You: First request · user-1', 'Pi: First response · assist-1']
-  })
-
-  await new Promise(r => setTimeout(r, 0))
-
-  assert.deepEqual((conn.elicitationRequests[0] as any).requestedSchema.properties, {
-    choice: {
-      type: 'string',
-      title: 'Suggested answers',
-      oneOf: [
-        { const: 'You: First request · user-1', title: 'You: First request · user-1' },
-        { const: 'Pi: First response · assist-1', title: 'Pi: First response · assist-1' }
-      ]
-    }
-  })
-  assert.deepEqual(proc.extensionUiResponses, [{ id: 'ui-tree', value: 'You: First request · user-1' }])
 })
 
 test('MagPiAcpSession: handles extension confirm with ACP elicitation', async () => {

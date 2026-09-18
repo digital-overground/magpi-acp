@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { activeSessionMessages, activeUserMessageEntryIds } from '../../src/acp/pi-session-tree.js'
+import { activeSessionMessages } from '../../src/acp/pi-session-tree.js'
 
-test('activeUserMessageEntryIds returns only user entries on the latest branch', () => {
+test('activeSessionMessages returns only messages on the latest branch', () => {
   const directory = mkdtempSync(join(tmpdir(), 'magpi-acp-tree-'))
   const sessionFile = join(directory, 'session.jsonl')
   const entries = [
@@ -49,7 +49,6 @@ test('activeUserMessageEntryIds returns only user entries on the latest branch',
   ]
   writeFileSync(sessionFile, entries.map(entry => JSON.stringify(entry)).join('\n'))
 
-  assert.deepEqual(activeUserMessageEntryIds(sessionFile), ['user-1', 'user-2'])
   assert.deepEqual(
     activeSessionMessages(sessionFile).map(entry => entry.id),
     ['user-1', 'assistant-2', 'user-2']

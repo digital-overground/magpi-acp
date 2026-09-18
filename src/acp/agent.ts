@@ -26,15 +26,17 @@ import {
 import { getAuthMethods } from './auth.js'
 import { SessionManager, toToolCallLocations, type MagPiAcpSession } from './session.js'
 import { SessionStore } from './session-store.js'
-import { PiRpcProcess } from '../pi-rpc/process.js'
+import { PiRpcProcess, type PiSessionEntry, type PiSessionTreeNode } from '../pi-rpc/process.js'
 import {
-  MAGPI_ACP_CLIENT_MESSAGE_ID_META,
-  MAGPI_ACP_TREE_COMMAND,
-  MAGPI_ACP_TREE_REWIND_CAPABILITY,
-  MAGPI_ACP_TREE_REWIND_METHOD
+  MAGPI_ACP_FORK_ENTRY_ID_META,
+  MAGPI_ACP_FORK_MESSAGES_METHOD,
+  MAGPI_ACP_FORK_PICKER_CAPABILITY,
+  MAGPI_ACP_NAVIGATE_TREE_METHOD,
+  MAGPI_ACP_TREE_METHOD,
+  MAGPI_ACP_TREE_PICKER_CAPABILITY
 } from '../pi-rpc/tree-command.js'
 import { listPiSessions, findPiSession } from './pi-sessions.js'
-import { activeSessionMessages, activeUserMessageEntryIds } from './pi-session-tree.js'
+import { activeSessionMessages } from './pi-session-tree.js'
 import { normalizePiAssistantText, normalizePiMessageText } from './translate/pi-messages.js'
 import { todoResultToPlanEntries, toolResultToText } from './translate/pi-tools.js'
 import {
@@ -69,6 +71,18 @@ type AdvertisedModel = {
 const MODEL_CONFIG_ID = 'model'
 const ROLE_CONFIG_ID = 'role'
 const THOUGHT_LEVEL_CONFIG_ID = 'thought_level'
+
+function findTreeMessage(tree: PiSessionTreeNode[], entryId: string): PiSessionEntry | null {
+  for (const node of tree) {
+    const role = node.entry.message?.role
+    if (node.entry.id === entryId && node.entry.type === 'message' && (role === 'user' || role === 'assistant')) {
+      return node.entry
+    }
+    const child = findTreeMessage(node.children, entryId)
+    if (child) return child
+  }
+  return null
+}
 
 function builtinAvailableCommands(): AvailableCommand[] {
   return [
@@ -108,10 +122,6 @@ function builtinAvailableCommands(): AvailableCommand[] {
     {
       name: 'changelog',
       description: 'Show pi changelog'
-    },
-    {
-      name: 'tree',
-      description: 'Navigate the Pi session tree and continue from an earlier point'
     }
   ]
 }
@@ -282,7 +292,8 @@ export class MagPiAcpAgent implements ACPAgent {
           list: {}
         },
         _meta: {
-          [MAGPI_ACP_TREE_REWIND_CAPABILITY]: true
+          [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,
+          [MAGPI_ACP_TREE_PICKER_CAPABILITY]: true
         }
       }
     }
@@ -460,31 +471,6 @@ export class MagPiAcpAgent implements ACPAgent {
       const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space)
       const argsString = space === -1 ? '' : trimmed.slice(space + 1)
       const args = parseCommandArgs(argsString)
-
-      if (cmd === 'tree') {
-        try {
-          const data = (await session.proc.getCommands()) as {
-            commands?: Array<{ name?: unknown }>
-          }
-          const commandAvailable = data.commands?.some(command => command.name === MAGPI_ACP_TREE_COMMAND) ?? false
-          if (!commandAvailable) {
-            throw new Error('The bundled Pi tree extension did not load.')
-          }
-
-          await session.proc.prompt(`/${MAGPI_ACP_TREE_COMMAND}`)
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error)
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text: `Tree navigation failed: ${message}` }
-            }
-          })
-        }
-
-        return { stopReason: 'end_turn' }
-      }
 
       if (cmd === 'compact') {
         const customInstructions = args.join(' ').trim() || undefined
@@ -919,12 +905,8 @@ export class MagPiAcpAgent implements ACPAgent {
       }
     }
 
-    const clientMessageId =
-      typeof params._meta?.[MAGPI_ACP_CLIENT_MESSAGE_ID_META] === 'string'
-        ? params._meta[MAGPI_ACP_CLIENT_MESSAGE_ID_META]
-        : undefined
     void this.autoTitleFirstMessage(session, message)
-    const result = await session.prompt(message, images, clientMessageId)
+    const result = await session.prompt(message, images)
 
     // ACP StopReason does not include "error"; if pi fails we map to end_turn for now,
     // unless we know this was a cancellation.
@@ -980,17 +962,18 @@ export class MagPiAcpAgent implements ACPAgent {
   }
 
   async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
-    const clientMessageId = params._meta?.[MAGPI_ACP_CLIENT_MESSAGE_ID_META]
-    if (typeof clientMessageId !== 'string') {
-      throw RequestError.invalidParams('A client message ID is required to fork this session.')
+    const rawEntryId = params._meta?.[MAGPI_ACP_FORK_ENTRY_ID_META]
+    if (rawEntryId !== undefined && (typeof rawEntryId !== 'string' || !rawEntryId.trim())) {
+      throw RequestError.invalidParams('Fork entry ID must be a non-empty string.')
     }
+    const entryId = typeof rawEntryId === 'string' ? rawEntryId : undefined
     const source = await this.restoreSession(params.sessionId)
     const state = (await source.proc.getState()) as { sessionFile?: unknown }
     if (typeof state.sessionFile !== 'string') {
       throw RequestError.internalError({}, 'Pi did not return the source session file.')
     }
     const sessionId = await this.sessions.fork({
-      clientMessageId,
+      entryId,
       cwd: params.cwd,
       piCommand: process.env.MAGPI_ACP_PI_COMMAND,
       sourceSessionFile: state.sessionFile
@@ -999,19 +982,46 @@ export class MagPiAcpAgent implements ACPAgent {
   }
 
   async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (method !== MAGPI_ACP_TREE_REWIND_METHOD) {
+    if (![MAGPI_ACP_FORK_MESSAGES_METHOD, MAGPI_ACP_TREE_METHOD, MAGPI_ACP_NAVIGATE_TREE_METHOD].includes(method)) {
       throw RequestError.methodNotFound(method)
     }
 
     const sessionId = typeof params.sessionId === 'string' ? params.sessionId : null
-    const clientMessageId = typeof params.clientMessageId === 'string' ? params.clientMessageId : null
-    if (!sessionId || !clientMessageId) {
-      throw RequestError.invalidParams('sessionId and clientMessageId are required.')
-    }
+    if (!sessionId) throw RequestError.invalidParams('sessionId is required.')
 
     const session = await this.restoreSession(sessionId)
-    await session.proc.rewindClientMessage(clientMessageId)
-    return { rewound: true }
+    if (method === MAGPI_ACP_FORK_MESSAGES_METHOD) {
+      return { messages: await session.proc.getForkMessages() }
+    }
+
+    if (method === MAGPI_ACP_TREE_METHOD) {
+      return await session.proc.getTree()
+    }
+
+    if (method === MAGPI_ACP_NAVIGATE_TREE_METHOD) {
+      const entryId = typeof params.entryId === 'string' && params.entryId.trim() ? params.entryId : null
+      if (!entryId) throw RequestError.invalidParams('entryId is required.')
+
+      const before = await session.proc.getTree()
+      const entry = findTreeMessage(before.tree, entryId)
+      if (!entry) throw RequestError.invalidParams(`Pi tree message not found: ${entryId}`)
+
+      const identity = (await session.proc.getState()) as { sessionFile?: unknown; sessionId?: unknown }
+      await session.proc.navigateTree(entryId)
+      const [after, nextState] = await Promise.all([session.proc.getTree(), session.proc.getState()])
+      const nextIdentity = nextState as { sessionFile?: unknown; sessionId?: unknown }
+      if (nextIdentity.sessionFile !== identity.sessionFile || nextIdentity.sessionId !== identity.sessionId) {
+        throw RequestError.internalError({}, 'Pi tree navigation changed the session identity.')
+      }
+
+      const role = entry.message?.role
+      return {
+        leafId: after.leafId,
+        draft: role === 'user' ? normalizePiMessageText(entry.message?.content) : null
+      }
+    }
+
+    throw RequestError.methodNotFound(method)
   }
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
@@ -1086,14 +1096,6 @@ export class MagPiAcpAgent implements ACPAgent {
       : Array.isArray(data?.messages)
         ? data.messages
         : []
-    const userMessageEntryIds = activeMessages.length
-      ? activeMessages.filter(entry => entry.message.role === 'user').map(entry => entry.id)
-      : activeUserMessageEntryIds(stored.sessionFile)
-    const assistantMessageEntryIds = activeMessages
-      .filter(entry => entry.message.role === 'assistant')
-      .map(entry => entry.id)
-    let userMessageIndex = 0
-    let assistantMessageIndex = 0
     let todoPlan: ReturnType<typeof todoResultToPlanEntries>
     const restoredToolArgs = new Map<string, unknown>()
     for (const message of messages) {
@@ -1111,42 +1113,27 @@ export class MagPiAcpAgent implements ACPAgent {
       if (role === 'user') {
         const text = normalizePiMessageText(m?.content)
         if (text) {
-          const messageId = userMessageEntryIds[userMessageIndex]
           await this.conn.sessionUpdate({
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'user_message_chunk',
-              content: { type: 'text', text },
-              ...(messageId
-                ? {
-                    messageId,
-                    _meta: {
-                      magPiAcp: {
-                        clientMessageId: messageId
-                      }
-                    }
-                  }
-                : {})
+              content: { type: 'text', text }
             }
           })
         }
-        userMessageIndex += 1
       }
 
       if (role === 'assistant') {
         const text = normalizePiAssistantText(m?.content)
-        const messageId = assistantMessageEntryIds[assistantMessageIndex]
         if (text) {
           await this.conn.sessionUpdate({
             sessionId: session.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text },
-              ...(messageId ? { messageId } : {})
+              content: { type: 'text', text }
             }
           })
         }
-        assistantMessageIndex += 1
       }
 
       if (role === 'toolResult') {

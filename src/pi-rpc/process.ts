@@ -3,11 +3,7 @@ import { existsSync } from 'node:fs'
 import * as readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { getPiCommand, shouldUseShellForPiCommand } from './command.js'
-import {
-  MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND,
-  MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
-  MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND
-} from './tree-command.js'
+import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from './tree-command.js'
 
 export class PiRpcSpawnError extends Error {
   /** Underlying spawn error code, e.g. ENOENT, EACCES */
@@ -55,6 +51,9 @@ type PiRpcCommand =
   | { type: 'export_html'; id?: string; outputPath?: string }
   | { type: 'switch_session'; id?: string; sessionPath: string }
   | { type: 'fork'; id?: string; entryId: string }
+  | { type: 'clone'; id?: string }
+  | { type: 'get_fork_messages'; id?: string }
+  | { type: 'get_tree'; id?: string }
   // Messages
   | { type: 'get_messages'; id?: string }
   // Commands
@@ -75,6 +74,19 @@ type PiExtensionUiResponse =
   | { id: string; cancelled: true }
 
 export type PiRpcEvent = Record<string, unknown>
+export type PiForkMessage = { entryId: string; text: string }
+export type PiSessionEntry = {
+  id: string
+  type: string
+  message?: { role?: string; content?: unknown }
+  [key: string]: unknown
+}
+export type PiSessionTreeNode = {
+  entry: PiSessionEntry
+  children: PiSessionTreeNode[]
+  label?: string
+  labelTimestamp?: string
+}
 
 type SpawnParams = {
   cwd: string
@@ -253,23 +265,55 @@ export class PiRpcProcess {
     if (!res.success) throw new Error(`pi prompt failed: ${res.error ?? JSON.stringify(res.data)}`)
   }
 
-  async markClientMessage(clientMessageId: string): Promise<void> {
-    await this.prompt(`/${MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
-  }
-
-  async forkClientMessage(clientMessageId: string): Promise<void> {
-    await this.prompt(`/${MAGPI_ACP_FORK_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
-  }
-
-  async rewindClientMessage(clientMessageId: string): Promise<void> {
-    await this.prompt(`/${MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND} ${clientMessageId}`)
-  }
-
   async fork(entryId: string): Promise<void> {
     const res = await this.request({ type: 'fork', entryId })
     if (!res.success) throw new Error(`pi fork failed: ${res.error ?? JSON.stringify(res.data)}`)
     if ((res.data as { cancelled?: unknown } | undefined)?.cancelled === true) {
       throw new Error('Pi cancelled the fork.')
+    }
+  }
+
+  async clone(): Promise<void> {
+    const res = await this.request({ type: 'clone' })
+    if (!res.success) throw new Error(`pi clone failed: ${res.error ?? JSON.stringify(res.data)}`)
+    if ((res.data as { cancelled?: unknown } | undefined)?.cancelled === true) {
+      throw new Error('Pi cancelled the clone.')
+    }
+  }
+
+  async getForkMessages(): Promise<PiForkMessage[]> {
+    const res = await this.request({ type: 'get_fork_messages' })
+    if (!res.success) throw new Error(`pi get_fork_messages failed: ${res.error ?? JSON.stringify(res.data)}`)
+    const messages = (res.data as { messages?: unknown } | undefined)?.messages
+    return Array.isArray(messages) ? (messages as PiForkMessage[]) : []
+  }
+
+  async getTree(): Promise<{ tree: PiSessionTreeNode[]; leafId: string | null }> {
+    const res = await this.request({ type: 'get_tree' })
+    if (!res.success) throw new Error(`pi get_tree failed: ${res.error ?? JSON.stringify(res.data)}`)
+    return res.data as { tree: PiSessionTreeNode[]; leafId: string | null }
+  }
+
+  async navigateTree(entryId: string): Promise<void> {
+    let unsubscribe = () => {}
+    const settled = new Promise<void>((resolve, reject) => {
+      let failure: Error | undefined
+      unsubscribe = this.onEvent(event => {
+        if (event.type === 'extension_error') {
+          failure = new Error(String(event.error ?? 'Pi tree navigation extension failed.'))
+        }
+        if (event.type !== 'agent_settled') return
+        unsubscribe()
+        if (failure) reject(failure)
+        else resolve()
+      })
+    })
+    try {
+      await this.prompt(`/${MAGPI_ACP_NAVIGATE_TREE_COMMAND} ${entryId}`)
+      await settled
+    } catch (error) {
+      unsubscribe()
+      throw error
     }
   }
 
