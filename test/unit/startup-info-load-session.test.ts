@@ -43,7 +43,7 @@ test('MagPiAcpAgent: does not emit startup info on loadSession', async () => {
 
     const res = await agent.loadSession({ sessionId: 's1', cwd: '/tmp/project', mcpServers: [] } as any)
 
-    assert.equal((res as any)?._meta?.magPiAcp?.startupInfo, null)
+    assert.equal('_meta' in res, false)
 
     // Only available_commands_update should be scheduled.
     assert.equal(timeouts.length, 1)

@@ -294,12 +294,12 @@ test('MagPiAcpSession: combines an extension selection with custom context', asy
               {
                 const: 'Alpha',
                 title: 'Alpha',
-                _meta: { magPiAcp: { description: 'The first option' } }
+                description: 'The first option'
               },
               {
                 const: 'Beta',
                 title: 'Beta',
-                _meta: { magPiAcp: { description: 'The second option' } }
+                description: 'The second option'
               }
             ]
           },

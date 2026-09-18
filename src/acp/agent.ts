@@ -370,12 +370,7 @@ export class MagPiAcpAgent implements ACPAgent {
       sessionId: session.sessionId,
       configOptions,
       models,
-      modes,
-      _meta: {
-        magPiAcp: {
-          startupInfo: preludeText || null
-        }
-      }
+      modes
     }
 
     // Try to send it immediately after session/new returns; if the client ignores it,
@@ -1005,7 +1000,7 @@ export class MagPiAcpAgent implements ACPAgent {
 
     const nextCursor = start + PAGE_SIZE < filtered.length ? String(start + PAGE_SIZE) : null
 
-    return { sessions, nextCursor, _meta: {} }
+    return { sessions, nextCursor }
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
@@ -1162,12 +1157,7 @@ export class MagPiAcpAgent implements ACPAgent {
     const response = {
       configOptions,
       models,
-      modes,
-      _meta: {
-        magPiAcp: {
-          startupInfo: null
-        }
-      }
+      modes
     }
 
     // Advertise slash commands after the response so the client knows the session exists.

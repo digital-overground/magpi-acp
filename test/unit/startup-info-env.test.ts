@@ -24,6 +24,7 @@ test('MagPiAcpAgent: startup message shows versions and tagline', async () => {
 
   try {
     const conn = new FakeAgentSideConnection()
+    let startupInfo = ''
     const session = {
       sessionId: 's1',
       proc: {
@@ -36,15 +37,17 @@ test('MagPiAcpAgent: startup message shows versions and tagline', async () => {
       },
       sendStartupInfoIfPending() {},
       sendUsageUpdate() {},
-      setStartupInfo() {}
+      setStartupInfo(text: string) {
+        startupInfo = text
+      }
     }
 
     const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
     ;(agent as any).sessions = new FakeSessions(session) as any
 
     const result = await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
-    const startupInfo = result?._meta?.magPiAcp?.startupInfo ?? ''
 
+    assert.equal('_meta' in result, false)
     assert.match(startupInfo, /^MagPi v\d+\.\d+\.\d+\npi v\d+\.\d+\.\d+\ncollect shiny things\n/)
     assert.doesNotMatch(startupInfo, /```/)
   } finally {
@@ -78,7 +81,7 @@ test('MagPiAcpAgent: quietStartup=true disables startup info generation/emission
   try {
     const conn = new FakeAgentSideConnection()
 
-    let setStartupInfoCalled = false
+    let startupInfo: string | null = null
     const session = {
       sessionId: 's1',
       cwd: process.cwd(),
@@ -93,8 +96,8 @@ test('MagPiAcpAgent: quietStartup=true disables startup info generation/emission
           }
         }
       },
-      setStartupInfo(_text: string) {
-        setStartupInfoCalled = true
+      setStartupInfo(text: string) {
+        startupInfo = text
       },
       sendStartupInfoIfPending() {
         // may be called when an update notice is available
@@ -106,17 +109,15 @@ test('MagPiAcpAgent: quietStartup=true disables startup info generation/emission
 
     const res = await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
 
-    const startupInfo = res?._meta?.magPiAcp?.startupInfo ?? null
+    assert.equal('_meta' in res, false)
 
     // When quietStartup=true the full prelude is suppressed. However, an update notice
     // (if one exists) is still surfaced because it's high-signal and actionable.
     // The test must tolerate both cases since the live npm check may or may not find an update.
     if (startupInfo) {
       assert.match(startupInfo, /New version available/)
-      assert.equal(setStartupInfoCalled, true)
       assert.equal(timeouts.length, 2)
     } else {
-      assert.equal(setStartupInfoCalled, false)
       assert.equal(timeouts.length, 2)
     }
   } finally {

@@ -17,17 +17,14 @@ p.stdout.on('data', d => {
 
     if (msg.id === 2) {
       sid = msg.result?.sessionId
-      console.log(
-        'session/new response _meta.magPiAcp.startupInfo present:',
-        Boolean(msg.result?._meta?.magPiAcp?.startupInfo)
-      )
+      console.log('session/new response uses standard fields only:', !('_meta' in msg.result))
     }
 
     if (msg.method === 'session/update') {
       const up = msg.params?.update
       if (up?.sessionUpdate === 'agent_message_chunk' && up?.content?.type === 'text') {
         const t = String(up.content.text)
-        if (t.includes('[Context]') && t.includes('[Skills]') && t.includes('[Extensions]')) {
+        if (/^MagPi v/.test(t) && /\npi v/.test(t)) {
           gotIntro = true
           console.log('OK: got intro via session/update (before any prompt)')
           p.kill('SIGTERM')

@@ -81,7 +81,7 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     const agent = new MagPiAcpAgent(asAgentConn(conn))
 
     // 1) list sessions
-    const listed = await agent.listSessions({ cwd: null, cursor: null, _meta: null } as any)
+    const listed = await agent.listSessions({ cwd: null, cursor: null } as any)
     assert.ok(listed.sessions.length >= 1)
 
     const s = listed.sessions.find(x => x.sessionId === 'sess-1')
@@ -110,7 +110,7 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     }
 
     try {
-      await agent.loadSession({ sessionId: 'sess-1', cwd: '/tmp/project', mcpServers: [], _meta: null } as any)
+      await agent.loadSession({ sessionId: 'sess-1', cwd: '/tmp/project', mcpServers: [] } as any)
 
       // loadSession should have replayed messages as session/update notifications.
       const texts = conn.updates

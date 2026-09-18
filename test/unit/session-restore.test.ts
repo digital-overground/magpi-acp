@@ -69,8 +69,7 @@ test('MagPiAcpAgent: prompt restores a missing live session through Pi discovery
 
     const result = await agent.prompt({
       sessionId: 'discovered-session',
-      prompt: [{ type: 'text', text: 'hello again' }],
-      _meta: { 'magpi-acp/client-message-id': 'client-message-1' }
+      prompt: [{ type: 'text', text: 'hello again' }]
     } as any)
 
     assert.equal(result.stopReason, 'end_turn')

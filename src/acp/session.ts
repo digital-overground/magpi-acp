@@ -451,13 +451,6 @@ export class MagPiAcpSession {
           }
         })
 
-        // Also publish queue depth via session info metadata.
-        // This also not visible in the client
-        this.emit({
-          sessionUpdate: 'session_info_update',
-          _meta: { magPiAcp: { queueDepth: this.turnQueue.length, running: true } }
-        })
-
         return
       }
 
@@ -479,10 +472,6 @@ export class MagPiAcpSession {
       this.emit({
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: 'Cleared queued prompts.' }
-      })
-      this.emit({
-        sessionUpdate: 'session_info_update',
-        _meta: { magPiAcp: { queueDepth: 0, running: Boolean(this.pendingTurn) } }
       })
     }
 
@@ -574,12 +563,6 @@ export class MagPiAcpSession {
 
     this.pendingTurn = { resolve: t.resolve, reject: t.reject }
 
-    // Publish queue depth (0 because we're starting the turn now).
-    this.emit({
-      sessionUpdate: 'session_info_update',
-      _meta: { magPiAcp: { queueDepth: this.turnQueue.length, running: true } }
-    })
-
     // Kick off pi, but completion is determined by pi events, not the RPC response.
     // Pi may emit multiple low-level runs; the full prompt ends at `agent_settled`.
     const prompt = this.proc.prompt(t.message, t.images)
@@ -601,11 +584,6 @@ export class MagPiAcpSession {
         this.inAgentLoop = false
 
         // If the prompt failed, do not automatically proceed—pi may be unhealthy.
-        // But we still clear the queueDepth metadata.
-        this.emit({
-          sessionUpdate: 'session_info_update',
-          _meta: { magPiAcp: { queueDepth: this.turnQueue.length, running: false } }
-        })
       })
       void err
     })
@@ -950,11 +928,6 @@ export class MagPiAcpSession {
                 content: { type: 'text', text: `Starting queued message. (${this.turnQueue.length} remaining)` }
               })
               this.startTurn(next)
-            } else {
-              this.emit({
-                sessionUpdate: 'session_info_update',
-                _meta: { magPiAcp: { queueDepth: 0, running: false } }
-              })
             }
           })
         break
@@ -1039,7 +1012,7 @@ export class MagPiAcpSession {
           return {
             const: option,
             title: option,
-            ...(description ? { _meta: { magPiAcp: { description } } } : {})
+            ...(description ? { description } : {})
           }
         })
       }
