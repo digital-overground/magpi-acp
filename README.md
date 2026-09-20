@@ -17,7 +17,7 @@ MagPi exposes standard ACP behavior for:
 - model, thinking-level, and role configuration through session configuration options;
 - form elicitation for compatible Pi extension prompts;
 - Pi extension, skill, and prompt-template commands;
-- session titles and persistent manual Pi session names;
+- automatic first-prompt titles and persistent manual Pi session names;
 - Terminal Auth backed by Pi's authentication setup.
 
 Pi owns session IDs, session files, branch creation, command expansion, model state, and thinking state. MagPi discovers persisted sessions from Pi's configured session directory and translates between Pi RPC and ACP.

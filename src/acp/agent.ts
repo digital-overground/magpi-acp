@@ -57,7 +57,7 @@ import { isAbsolute } from 'node:path'
 import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs'
 import type { AvailableCommand } from '@agentclientprotocol/sdk'
 import { join, dirname } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import { getPiCommand, shouldUseShellForPiCommand } from '../pi-rpc/command.js'
 
 type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -146,6 +146,8 @@ export class MagPiAcpAgent implements ACPAgent {
   private readonly conn: AgentSideConnection
   private readonly sessions = new SessionManager()
   private readonly restoringSessions = new Map<string, Promise<MagPiAcpSession>>()
+  private readonly autoTitlingSessions = new Set<string>()
+  private generateTitle = generateThreadTitle
   private supportsFormElicitation = false
 
   dispose(): void {
@@ -854,6 +856,7 @@ export class MagPiAcpAgent implements ACPAgent {
       }
     }
 
+    void this.autoTitleFirstMessage(session, message)
     const result = await session.prompt(message, images)
 
     // ACP StopReason does not include "error"; if pi fails we map to end_turn for now,
@@ -862,6 +865,45 @@ export class MagPiAcpAgent implements ACPAgent {
       result === 'error' ? (session.wasCancelRequested() ? 'cancelled' : 'end_turn') : result
 
     return { stopReason }
+  }
+
+  private async autoTitleFirstMessage(session: MagPiAcpSession, message: string): Promise<void> {
+    if (this.autoTitlingSessions.has(session.sessionId)) return
+    this.autoTitlingSessions.add(session.sessionId)
+
+    try {
+      const [state, data] = (await Promise.all([session.proc.getState(), session.proc.getMessages()])) as [any, any]
+      if (typeof state?.sessionName === 'string' && state.sessionName.trim()) return
+
+      const messages = Array.isArray(data?.messages) ? data.messages : []
+      if (messages.some((candidate: any) => candidate?.role === 'user')) return
+
+      const provider = String(state?.model?.provider ?? '').trim()
+      const modelId = String(state?.model?.id ?? '').trim()
+      if (!provider || !modelId) return
+
+      const title = await this.generateTitle({
+        cwd: session.cwd,
+        model: `${provider}/${modelId}`,
+        user: message
+      })
+      if (!title) return
+
+      const latestState = (await session.proc.getState()) as any
+      if (typeof latestState?.sessionName === 'string' && latestState.sessionName.trim()) return
+
+      await session.proc.setSessionName(title)
+      await this.conn.sessionUpdate({
+        sessionId: session.sessionId,
+        update: {
+          sessionUpdate: 'session_info_update',
+          title,
+          updatedAt: new Date().toISOString()
+        }
+      })
+    } catch {
+      // Automatic titles are optional and must never affect the conversation.
+    }
   }
 
   async cancel(params: CancelNotification): Promise<void> {
@@ -1472,6 +1514,65 @@ async function setSessionModel(proc: PiRpcProcess, requestedModelId: string): Pr
   }
 
   await proc.setModel(provider, modelId)
+}
+
+function normalizeGeneratedTitle(output: string): string | null {
+  const line = output
+    .trim()
+    .split(/\r?\n/)
+    .find(Boolean)
+    ?.replace(/^#+\s*/, '')
+    .replace(/^title:\s*/i, '')
+    .replace(/^["'`]+|["'`.,:;!?]+$/g, '')
+    .trim()
+  if (!line) return null
+
+  return line.split(/\s+/).slice(0, 6).join(' ').slice(0, 200).trim() || null
+}
+
+export async function generateThreadTitle(params: {
+  cwd: string
+  model: string
+  user: string
+}): Promise<string | null> {
+  const prompt = [
+    'Create a concise 2-6 word title for this conversation.',
+    'Return only the title, without quotes or punctuation.',
+    '',
+    `User: ${params.user.slice(0, 4000)}`
+  ].join('\n')
+
+  return await new Promise(resolve => {
+    const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND)
+    const child = execFile(
+      command,
+      [
+        '--print',
+        '--no-session',
+        '--no-tools',
+        '--no-extensions',
+        '--no-skills',
+        '--no-prompt-templates',
+        '--no-context-files',
+        '--no-themes',
+        '--model',
+        params.model,
+        '--thinking',
+        'off',
+        '--',
+        prompt
+      ],
+      {
+        cwd: params.cwd,
+        encoding: 'utf8',
+        timeout: 15_000,
+        maxBuffer: 16_384,
+        shell: shouldUseShellForPiCommand(command)
+      },
+      (error, stdout) => resolve(error ? null : normalizeGeneratedTitle(stdout))
+    )
+    child.stdin?.end()
+  })
 }
 
 function isSemver(v: string): boolean {
