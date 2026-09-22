@@ -370,9 +370,18 @@ export function listPiSessions(): PiSessionListItem[] {
   return items
 }
 
-export function findPiSession(sessionId: string): PiSessionListItem | null {
-  const all = listPiSessions()
-  return all.find(s => s.sessionId === sessionId) ?? null
+export function findPiSession(sessionId: string): Pick<PiSessionListItem, 'sessionId' | 'cwd' | 'sessionFile'> | null {
+  const files: string[] = []
+  walkJsonlFiles(getPiSessionsDir(), files)
+
+  for (const sessionFile of files) {
+    const first = readFirstLine(sessionFile)
+    if (!first) continue
+    const header = parseSessionHeader(first)
+    if (header?.sessionId === sessionId) return { ...header, sessionFile }
+  }
+
+  return null
 }
 
 export function findPiSessionFile(sessionId: string): string | null {

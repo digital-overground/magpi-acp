@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { listPiSessions } from '../../src/acp/pi-sessions.js'
+import { findPiSession, listPiSessions } from '../../src/acp/pi-sessions.js'
 
 test('listPiSessions: respects sessionDir from pi settings.json', async () => {
   const root = mkdtempSync(join(tmpdir(), 'magpi-acp-test-'))
@@ -45,6 +45,11 @@ test('listPiSessions: respects sessionDir from pi settings.json', async () => {
     const s = listPiSessions().find(x => x.sessionId === 'sess-custom')
     assert.ok(s)
     assert.equal(s?.sessionFile, join(customSessionsDir, 's.jsonl'))
+    assert.deepEqual(findPiSession('sess-custom'), {
+      sessionId: 'sess-custom',
+      cwd: '/tmp/project',
+      sessionFile: join(customSessionsDir, 's.jsonl')
+    })
   } finally {
     if (oldEnv === undefined) delete process.env.PI_CODING_AGENT_DIR
     else process.env.PI_CODING_AGENT_DIR = oldEnv
