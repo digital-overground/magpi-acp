@@ -6,115 +6,138 @@
 // 3) session/prompt
 // 4) new process: session/load for the created sessionId
 
-import { spawn } from 'node:child_process'
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 
-function spawnAgent() {
-  const proc = spawn('node', ['dist/index.js'], { stdio: ['pipe', 'pipe', 'inherit'] })
-  proc.stdout.setEncoding('utf-8')
+import {
+  hasMessageId,
+  parseJsonObject,
+  responseSessionId,
+  sendJson,
+} from "./smoke-helpers.mjs";
 
-  let buffer = ''
-  const listeners = []
-
-  proc.stdout.on('data', chunk => {
-    buffer += chunk
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      if (!line.trim()) continue
-      let msg
-      try {
-        msg = JSON.parse(line)
-      } catch {
-        continue
-      }
-      for (const l of listeners) l(msg)
-    }
-  })
+const spawnAgent = () => {
+  const proc = spawn("node", ["dist/index.js"], {
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  proc.stdout.setEncoding("utf-8");
 
   return {
-    proc,
-    send(obj) {
-      proc.stdin.write(JSON.stringify(obj) + '\n')
-    },
-    onMessage(cb) {
-      listeners.push(cb)
-    },
     kill() {
-      proc.kill('SIGTERM')
+      proc.kill("SIGTERM");
+    },
+    proc,
+    /** @param {unknown} object - JSON-compatible request. */
+    send(object) {
+      sendJson(proc.stdin, object);
+    },
+  };
+};
+
+/** @typedef {ReturnType<typeof spawnAgent>} SmokeAgent */
+
+/**
+ * @param {SmokeAgent} agent - Running smoke-test agent.
+ * @yields {Record<string, unknown>} Parsed JSON-RPC messages.
+ */
+const messagesFrom = async function* messagesFrom(agent) {
+  const lines = createInterface({ input: agent.proc.stdout });
+  for await (const line of lines) {
+    if (!line.trim()) {
+      continue;
+    }
+    const message = parseJsonObject(line);
+    if (message !== null) {
+      yield message;
     }
   }
-}
+};
 
-async function createAndPrompt() {
-  const a = spawnAgent()
+const createAndPrompt = async () => {
+  const agent = spawnAgent();
+  /** @type {string | null} */
+  let sessionId = null;
 
-  return await new Promise((resolve, reject) => {
-    let sessionId = null
+  agent.send({
+    id: 1,
+    jsonrpc: "2.0",
+    method: "initialize",
+    params: { protocolVersion: 1 },
+  });
+  agent.send({
+    id: 2,
+    jsonrpc: "2.0",
+    method: "session/new",
+    params: { cwd: process.cwd(), mcpServers: [] },
+  });
 
-    a.onMessage(msg => {
-      if (msg?.id === 2 && msg?.result?.sessionId) {
-        sessionId = msg.result.sessionId
-        a.send({
-          jsonrpc: '2.0',
-          id: 3,
-          method: 'session/prompt',
-          params: { sessionId, prompt: [{ type: 'text', text: 'Hello' }] }
-        })
+  for await (const message of messagesFrom(agent)) {
+    const newSessionId = hasMessageId(message, 2)
+      ? responseSessionId(message)
+      : null;
+    if (newSessionId !== null) {
+      sessionId = newSessionId;
+      agent.send({
+        id: 3,
+        jsonrpc: "2.0",
+        method: "session/prompt",
+        params: {
+          prompt: [{ text: "Hello", type: "text" }],
+          sessionId,
+        },
+      });
+    }
+
+    if (hasMessageId(message, 3)) {
+      agent.kill();
+      if (sessionId !== null) {
+        return sessionId;
       }
+      throw new Error("No sessionId");
+    }
+  }
 
-      if (msg?.id === 3) {
-        a.kill()
-        if (!sessionId) reject(new Error('No sessionId'))
-        else resolve(sessionId)
+  throw new Error("Agent exited before creating and prompting a session");
+};
+
+/** @param {string} sessionId - Session to load. */
+const loadAndCountReplay = async (sessionId) => {
+  const agent = spawnAgent();
+  let updates = 0;
+
+  agent.send({
+    id: 1,
+    jsonrpc: "2.0",
+    method: "initialize",
+    params: { protocolVersion: 1 },
+  });
+  agent.send({
+    id: 2,
+    jsonrpc: "2.0",
+    method: "session/load",
+    params: { cwd: process.cwd(), mcpServers: [], sessionId },
+  });
+
+  for await (const message of messagesFrom(agent)) {
+    if (message.method === "session/update") {
+      updates += 1;
+    }
+
+    if (hasMessageId(message, 2)) {
+      if (message.result !== null) {
+        throw new Error("Expected session/load result to be null");
       }
-    })
+      agent.kill();
+      return updates;
+    }
+  }
 
-    a.proc.on('error', reject)
+  throw new Error("Agent exited before loading the session");
+};
 
-    a.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1 } })
-    a.send({ jsonrpc: '2.0', id: 2, method: 'session/new', params: { cwd: process.cwd(), mcpServers: [] } })
-
-    // If the agent exits before we complete, fail.
-    a.proc.on('exit', code => {
-      if (sessionId) return
-      reject(new Error(`agent exited early with code ${code}`))
-    })
-  })
+const sessionId = await createAndPrompt();
+const replayUpdates = await loadAndCountReplay(sessionId);
+if (replayUpdates === 0) {
+  throw new Error("Expected session/load to replay updates");
 }
-
-async function loadAndCountReplay(sessionId) {
-  const a = spawnAgent()
-
-  return await new Promise((resolve, reject) => {
-    let updates = 0
-
-    a.onMessage(msg => {
-      if (msg?.method === 'session/update') updates++
-
-      if (msg?.id === 2) {
-        if (msg?.result !== null) {
-          reject(new Error('Expected session/load result to be null'))
-          return
-        }
-        a.kill()
-        resolve(updates)
-      }
-    })
-
-    a.proc.on('error', reject)
-
-    a.send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1 } })
-    a.send({
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'session/load',
-      params: { sessionId, cwd: process.cwd(), mcpServers: [] }
-    })
-  })
-}
-
-const sessionId = await createAndPrompt()
-const replayUpdates = await loadAndCountReplay(sessionId)
-if (replayUpdates === 0) throw new Error('Expected session/load to replay updates')
-console.log('OK session/load smoke:', { sessionId, replayUpdates })
+console.log("OK session/load smoke:", { replayUpdates, sessionId });

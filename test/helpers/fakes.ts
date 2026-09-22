@@ -1,106 +1,86 @@
-import type { AgentSideConnection } from '@agentclientprotocol/sdk'
-import type { PiRpcEvent } from '../../src/pi-rpc/process.js'
+import type {
+  CreateElicitationRequest,
+  CreateElicitationResponse,
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionNotification,
+} from "@agentclientprotocol/sdk";
 
-type SessionUpdateMsg = Parameters<AgentSideConnection['sessionUpdate']>[0]
+import type { AgentClientConnection } from "../../src/acp/connection.js";
+import { PiRpcProcess } from "../../src/pi-rpc/process.js";
 
-export class FakeAgentSideConnection {
-  readonly updates: SessionUpdateMsg[] = []
-  readonly permissionRequests: unknown[] = []
-  readonly elicitationRequests: unknown[] = []
-  nextPermissionResponse: { outcome: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' } } = {
-    outcome: { outcome: 'selected', optionId: 'allow' }
+export { FakePiRpcProcess } from "./fake-pi-rpc-process.js";
+
+export type UnknownRecord = Record<string, unknown>;
+
+const isRecord = (value: unknown): value is UnknownRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const asRecord = (value: unknown): UnknownRecord => {
+  if (!isRecord(value)) {
+    throw new TypeError("Expected an object");
   }
-  nextElicitationResponse:
-    | { action: 'accept'; content?: Record<string, string | number | boolean | string[]> }
-    | { action: 'decline' | 'cancel' } = { action: 'cancel' }
+  return value;
+};
 
-  async sessionUpdate(msg: SessionUpdateMsg): Promise<void> {
-    this.updates.push(msg)
+export const asArray = (value: unknown): unknown[] => {
+  if (!Array.isArray(value)) {
+    throw new TypeError("Expected an array");
+  }
+  return value;
+};
+
+export const replaceProperty = (
+  target: object,
+  property: PropertyKey,
+  value: unknown
+): void => {
+  Object.defineProperty(target, property, {
+    configurable: true,
+    value,
+    writable: true,
+  });
+};
+
+export const mockPiSpawn = (spawn: typeof PiRpcProcess.spawn): (() => void) => {
+  const originalSpawn = PiRpcProcess.spawn.bind(PiRpcProcess);
+  PiRpcProcess.spawn = spawn;
+  return () => {
+    PiRpcProcess.spawn = originalSpawn;
+  };
+};
+
+export class FakeAgentSideConnection implements AgentClientConnection {
+  readonly updates: SessionNotification[] = [];
+  readonly permissionRequests: RequestPermissionRequest[] = [];
+  readonly elicitationRequests: CreateElicitationRequest[] = [];
+  nextPermissionResponse: RequestPermissionResponse = {
+    outcome: { optionId: "allow", outcome: "selected" },
+  };
+  nextElicitationResponse: CreateElicitationResponse = { action: "cancel" };
+
+  async sessionUpdate(msg: SessionNotification): Promise<void> {
+    await Promise.resolve();
+    this.updates.push(msg);
   }
 
   async requestPermission(
-    params: unknown
-  ): Promise<{ outcome: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' } }> {
-    this.permissionRequests.push(params)
-    return this.nextPermissionResponse
+    params: RequestPermissionRequest
+  ): Promise<RequestPermissionResponse> {
+    await Promise.resolve();
+    this.permissionRequests.push(params);
+    return this.nextPermissionResponse;
   }
 
-  async unstable_createElicitation(
-    params: unknown
-  ): Promise<
-    | { action: 'accept'; content?: Record<string, string | number | boolean | string[]> }
-    | { action: 'decline' | 'cancel' }
-  > {
-    this.elicitationRequests.push(params)
-    return this.nextElicitationResponse
-  }
-}
-
-export class FakePiRpcProcess {
-  private handlers: Array<(ev: PiRpcEvent) => void> = []
-
-  // spies
-  readonly prompts: Array<{ message: string; attachments: unknown[] }> = []
-  readonly markedClientMessages: string[] = []
-  readonly rewoundClientMessages: string[] = []
-  readonly extensionUiResponses: unknown[] = []
-  sessionStats: unknown = {}
-  commands: unknown = { commands: [] }
-  abortCount = 0
-
-  onEvent(handler: (ev: PiRpcEvent) => void): () => void {
-    this.handlers.push(handler)
-    return () => {
-      this.handlers = this.handlers.filter(h => h !== handler)
-    }
-  }
-
-  emit(ev: PiRpcEvent) {
-    for (const h of this.handlers) h(ev)
-  }
-
-  async prompt(message: string, attachments: unknown[] = []): Promise<void> {
-    this.prompts.push({ message, attachments })
-  }
-
-  async markClientMessage(clientMessageId: string): Promise<void> {
-    this.markedClientMessages.push(clientMessageId)
-  }
-
-  async rewindClientMessage(clientMessageId: string): Promise<void> {
-    this.rewoundClientMessages.push(clientMessageId)
-  }
-
-  async abort(): Promise<void> {
-    this.abortCount += 1
-  }
-
-  async sendExtensionUiResponse(response: unknown): Promise<void> {
-    this.extensionUiResponses.push(response)
-  }
-
-  async getState(): Promise<any> {
-    return {}
-  }
-
-  async getAvailableModels(): Promise<any> {
-    return { models: [{ provider: 'test', id: 'model', name: 'model' }] }
-  }
-
-  async getMessages(): Promise<any> {
-    return { messages: [] }
-  }
-
-  async getSessionStats(): Promise<unknown> {
-    return this.sessionStats
-  }
-
-  async getCommands(): Promise<unknown> {
-    return this.commands
+  async createElicitation(
+    params: CreateElicitationRequest
+  ): Promise<CreateElicitationResponse> {
+    await Promise.resolve();
+    this.elicitationRequests.push(params);
+    return this.nextElicitationResponse;
   }
 }
 
-export function asAgentConn(conn: FakeAgentSideConnection): AgentSideConnection {
-  // We only implement the method(s) used by MagPiAcpSession in tests.
-  return conn as unknown as AgentSideConnection
-}
+export const asAgentConn = (
+  conn: FakeAgentSideConnection
+): AgentClientConnection => conn;

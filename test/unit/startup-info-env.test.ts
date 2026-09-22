@@ -1,127 +1,170 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { MagPiAcpAgent } from '../../src/acp/agent.js'
-import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
+import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import { MagPiAcpAgent } from "../../src/acp/agent.js";
+import {
+  FakeAgentSideConnection,
+  asAgentConn,
+  replaceProperty,
+} from "../helpers/fakes.js";
 
 class FakeSessions {
-  constructor(private readonly session: any) {}
-  async create(_params: any) {
-    return this.session
+  private readonly session: unknown;
+
+  constructor(session: unknown) {
+    this.session = session;
   }
+
+  async create(_params: unknown): Promise<unknown> {
+    await Promise.resolve();
+    return this.session;
+  }
+
+  closeAllExcept = (_sessionId: string): void => {
+    assert.notEqual(this.session, undefined);
+  };
 }
 
-test('MagPiAcpAgent: startup message shows versions and tagline', async () => {
-  const prevAgentDir = process.env.PI_CODING_AGENT_DIR
-  const prevPiCommand = process.env.MAGPI_ACP_PI_COMMAND
-  const { mkdtempSync } = await import('node:fs')
-  const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
-  process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), 'magpi-acp-startup-'))
-  process.env.MAGPI_ACP_PI_COMMAND = process.execPath
+const setSessions = (agent: MagPiAcpAgent, sessions: FakeSessions): void => {
+  replaceProperty(agent, "sessions", sessions);
+};
 
-  const realSetTimeout = globalThis.setTimeout
-  ;(globalThis as any).setTimeout = () => 0 as any
+void test("MagPiAcpAgent: startup message shows versions and tagline", async () => {
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const previousPiCommand = process.env.MAGPI_ACP_PI_COMMAND;
+  process.env.PI_CODING_AGENT_DIR = mkdtempSync(
+    path.join(tmpdir(), "magpi-acp-startup-")
+  );
+  process.env.MAGPI_ACP_PI_COMMAND = process.execPath;
+
+  const realSetTimeout = globalThis.setTimeout;
+  replaceProperty(globalThis, "setTimeout", () => 0);
 
   try {
-    const conn = new FakeAgentSideConnection()
+    const conn = new FakeAgentSideConnection();
+    let startupInfo = "";
     const session = {
-      sessionId: 's1',
       proc: {
-        async getAvailableModels() {
-          return { models: [{ provider: 'test', id: 'model', name: 'model' }] }
+        getAvailableModels: async () => {
+          await Promise.resolve();
+          return {
+            models: [{ id: "model", name: "model", provider: "test" }],
+          };
         },
-        async getState() {
-          return { thinkingLevel: 'medium', model: { provider: 'test', id: 'model' } }
-        }
+        getState: async () => {
+          await Promise.resolve();
+          return {
+            model: { id: "model", provider: "test" },
+            thinkingLevel: "medium",
+          };
+        },
       },
       sendStartupInfoIfPending() {},
       sendUsageUpdate() {},
-      setStartupInfo() {}
-    }
+      sessionId: "s1",
+      setStartupInfo(text: string) {
+        startupInfo = text;
+      },
+    };
 
-    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
-    ;(agent as any).sessions = new FakeSessions(session) as any
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+    setSessions(agent, new FakeSessions(session));
 
-    const result = await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
-    const startupInfo = result?._meta?.magPiAcp?.startupInfo ?? ''
+    const result = await agent.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
 
-    assert.match(startupInfo, /^MagPi v\d+\.\d+\.\d+\npi v\d+\.\d+\.\d+\ncollect shiny things\n/)
-    assert.doesNotMatch(startupInfo, /```/)
+    assert.equal("_meta" in result, false);
+    assert.match(
+      startupInfo,
+      /^MagPi v\d+\.\d+\.\d+\npi v\d+\.\d+\.\d+\ncollect shiny things\n/u
+    );
+    assert.doesNotMatch(startupInfo, /```/u);
   } finally {
-    ;(globalThis as any).setTimeout = realSetTimeout
-    if (prevAgentDir == null) delete process.env.PI_CODING_AGENT_DIR
-    else process.env.PI_CODING_AGENT_DIR = prevAgentDir
-    if (prevPiCommand == null) delete process.env.MAGPI_ACP_PI_COMMAND
-    else process.env.MAGPI_ACP_PI_COMMAND = prevPiCommand
+    replaceProperty(globalThis, "setTimeout", realSetTimeout);
+    if (previousAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    }
+    if (previousPiCommand === undefined) {
+      delete process.env.MAGPI_ACP_PI_COMMAND;
+    } else {
+      process.env.MAGPI_ACP_PI_COMMAND = previousPiCommand;
+    }
   }
-})
+});
 
-test('MagPiAcpAgent: quietStartup=true disables startup info generation/emission', async () => {
-  const prevAgentDir = process.env.PI_CODING_AGENT_DIR
+void test("MagPiAcpAgent: quietStartup=true disables startup info generation/emission", async () => {
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
-  // Force quietStartup in pi settings by pointing PI_CODING_AGENT_DIR at a temp dir.
-  const { mkdtempSync, writeFileSync } = await import('node:fs')
-  const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
-  const dir = mkdtempSync(join(tmpdir(), 'magpi-acp-quietstartup-'))
-  writeFileSync(join(dir, 'settings.json'), JSON.stringify({ quietStartup: true }, null, 2), 'utf-8')
-  process.env.PI_CODING_AGENT_DIR = dir
+  const dir = mkdtempSync(path.join(tmpdir(), "magpi-acp-quietstartup-"));
+  writeFileSync(
+    path.join(dir, "settings.json"),
+    JSON.stringify({ quietStartup: true }, null, 2),
+    "utf-8"
+  );
+  process.env.PI_CODING_AGENT_DIR = dir;
 
-  // Spy on setTimeout calls (agent schedules startup info + available commands)
-  const realSetTimeout = globalThis.setTimeout
-  const timeouts: Array<unknown> = []
-  ;(globalThis as any).setTimeout = (fn: unknown, _ms?: number) => {
-    timeouts.push(fn)
-    return 0 as any
-  }
+  const realSetTimeout = globalThis.setTimeout;
+  const timeouts: unknown[] = [];
+  replaceProperty(globalThis, "setTimeout", (scheduledTask: unknown) => {
+    timeouts.push(scheduledTask);
+    return 0;
+  });
 
   try {
-    const conn = new FakeAgentSideConnection()
+    const conn = new FakeAgentSideConnection();
 
-    let setStartupInfoCalled = false
+    let startupInfo: string | null = null;
     const session = {
-      sessionId: 's1',
       cwd: process.cwd(),
       proc: {
-        async getAvailableModels() {
-          return { models: [{ provider: 'test', id: 'model', name: 'model' }] }
-        },
-        async getState() {
+        getAvailableModels: async () => {
+          await Promise.resolve();
           return {
-            thinkingLevel: 'medium',
-            model: { provider: 'test', id: 'model' }
-          }
-        }
+            models: [{ id: "model", name: "model", provider: "test" }],
+          };
+        },
+        getState: async () => {
+          await Promise.resolve();
+          return {
+            model: { id: "model", provider: "test" },
+            thinkingLevel: "medium",
+          };
+        },
       },
-      setStartupInfo(_text: string) {
-        setStartupInfoCalled = true
+      sendStartupInfoIfPending() {},
+      sessionId: "s1",
+      setStartupInfo(text: string) {
+        startupInfo = text;
       },
-      sendStartupInfoIfPending() {
-        // may be called when an update notice is available
-      }
+    };
+
+    const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+    setSessions(agent, new FakeSessions(session));
+
+    const result = await agent.newSession({
+      cwd: process.cwd(),
+      mcpServers: [],
+    });
+
+    assert.equal("_meta" in result, false);
+
+    if (typeof startupInfo === "string") {
+      assert.match(startupInfo, /New version available/u);
     }
-
-    const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
-    ;(agent as any).sessions = new FakeSessions(session) as any
-
-    const res = await agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any)
-
-    const startupInfo = res?._meta?.magPiAcp?.startupInfo ?? null
-
-    // When quietStartup=true the full prelude is suppressed. However, an update notice
-    // (if one exists) is still surfaced because it's high-signal and actionable.
-    // The test must tolerate both cases since the live npm check may or may not find an update.
-    if (startupInfo) {
-      assert.match(startupInfo, /New version available/)
-      assert.equal(setStartupInfoCalled, true)
-      assert.equal(timeouts.length, 2)
-    } else {
-      assert.equal(setStartupInfoCalled, false)
-      assert.equal(timeouts.length, 2)
-    }
+    assert.equal(timeouts.length, 2);
   } finally {
-    ;(globalThis as any).setTimeout = realSetTimeout
-    if (prevAgentDir == null) delete process.env.PI_CODING_AGENT_DIR
-    else process.env.PI_CODING_AGENT_DIR = prevAgentDir
+    replaceProperty(globalThis, "setTimeout", realSetTimeout);
+    if (previousAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    }
   }
-})
+});

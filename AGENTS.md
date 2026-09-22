@@ -1,70 +1,47 @@
-# magpi-acp (ACP adapter for pi-coding-agent)
+# MagPi ACP
 
-This repository implements an **Agent Client Protocol (ACP)** adapter for **pi** (`@earendil-works/pi-coding-agent`) without modifying pi.
+MagPi ACP is Mischief's Agent Client Protocol adapter for Pi. It is a TypeScript process that bridges ACP JSON-RPC over stdio to a local `pi --mode rpc` subprocess.
 
-- ACP side: **JSON-RPC 2.0 over stdio** using `@agentclientprotocol/sdk` (TypeScript)
-- Pi side: spawn `pi --mode rpc` and communicate via **newline-delimited JSON** over stdio
+## Architecture
 
-## Architecture (MVP)
+- `src/acp` owns the Mischief-facing ACP server, session lifecycle, and event translation.
+- `src/pi-rpc` owns the Pi subprocess and newline-delimited RPC protocol.
+- `src/pi-extension` owns native Pi session-tree operations used by Mischief.
+- One ACP connection keeps at most one live Pi subprocess. Mischief uses a separate Agent process for each active Thread.
+- Pi performs filesystem and terminal work locally. MCP servers are retained in session state but are not forwarded.
 
-### 1 ACP session ↔ 1 pi subprocess
+## Mischief contract
 
-Pi RPC mode is effectively single-session, so the adapter maps:
+Mischief lives in the sibling `../mischief` repository. Check its `src/threads/acp.ts` call sites when changing protocol behavior.
 
-- `session/new` → spawn a dedicated `pi --mode rpc` process
-- `session/prompt` → send `{type:"prompt"}` to that process and stream events back as `session/update`
-- `session/cancel` → send `{type:"abort"}`
+Use standard ACP where it covers the behavior. The current private contract fills session-tree gaps in ACP:
 
-### ACP server wiring (modeled after opencode)
+- `_meta["magpi-acp/client-message-id"]` anchors prompts and forks to stable Mischief message IDs.
+- `magpi-acp/tree-rewind` advertises support for `_magpi-acp/session/rewind`.
+- Agent message chunks include `messageId` so Mischief can target Pi responses for fork and rollback.
+- `_meta.magPiAcp` carries startup information, queue state, session previews, and option descriptions consumed by Mischief.
 
-Use `@agentclientprotocol/sdk`:
-
-- `ndJsonStream(input, output)` to speak ACP over stdio
-- `new AgentSideConnection((conn) => new MagPiAcpAgent(conn, config), stream)`
-
-## Implementation constraints / decisions
-
-- Do **not** implement ACP client-side FS/terminal delegation in MVP. Pi already reads/writes and executes locally.
-- Ignore `mcpServers` for MVP (accept in params, store in session state).
-- Stream all pi assistant output as ACP `agent_message_chunk` initially.
-- Tool events: map pi tool execution events to ACP `tool_call` / `tool_call_update` (as text content).
-
-## Dev workflow (to be filled once scaffold exists)
-
-- Install deps: `npm install`
-- Run in dev: `npm run dev`
-- Build: `npm run build`
-- Smoke test (stdio): `npm run smoke`
-- Lint: `npm run lint`
-- Test: `npm run test`
-
-## Manual testing notes
-
-Once the adapter runs, it should behave like an ACP agent on stdio.
-
-Quick sanity test (example):
-
-```bashN
-# Send initialize request via stdin (exact fields depend on ACP SDK version)
-# echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}' | node dist/index.js
-```
-
-For real validation, test with an ACP-compatible client.
+Preserve Thread history, form elicitation, Terminal Auth, structured diffs, plans, usage, and role/model/thinking controls when changing translations.
 
 ## Coding guidelines
 
-- Keep ACP protocol handling in `src/acp/*`.
-- Keep pi RPC subprocess logic in `src/pi-rpc/*`.
-- Prefer small translation functions (pi event → ACP session/update) with unit tests.
-- Be strict about streaming and process cleanup (handle exit, drain stdout/stderr, timeouts).
-- Avoid producing unnecessary comments! Use comments sparingly to explain non-obvious decisions, not to narrate code.
-- Avoid using `any` in TypeScript; prefer explicit types and interfaces. Only use `any` when absolutely necessary (e.g. for untyped external data).
+- Keep translation functions small and test protocol changes at the nearest existing seam.
+- Be strict about stream cleanup, subprocess exit, and stdout/stderr draining.
+- Prefer explicit TypeScript types; use `any` only at untyped external boundaries.
+- Use comments only for non-obvious protocol decisions.
+- Do not modify Mischief unless the task explicitly spans both repositories.
 
 ## Validation
 
-- After making code edits, run formatting before finishing the task. Use `npm run format` when it is safe to format the whole worktree; otherwise use the narrowest safe formatter command for the files you touched.
-- If formatting is skipped or fails, say so explicitly in the final response.
+Run formatting before finishing. Use `npm run format` when the whole worktree is safe to format, otherwise format only touched files.
+
+```text
+npm run check
+npm run smoke
+```
+
+If formatting or validation is skipped or fails, report it.
 
 ## Source control
 
-- **DO NOT** commit unless explicitly asked!
+Do not commit unless explicitly asked.

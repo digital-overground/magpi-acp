@@ -1,45 +1,36 @@
 # ACP Registry readiness
 
-Checked against the ACP Registry contribution rules and validation code on 2026-08-18.
+Updated against the ACP Registry contribution rules and MagPi ACP `dev` branch on 2026-09-18.
 
-## Registry requirements
+## Current status
 
-- An entry needs a unique lowercase ID, numeric semantic version, description, and at least one `binary`, `npx`, or `uvx` distribution. The directory name must equal the ID. [Contribution guide](https://github.com/agentclientprotocol/registry/blob/main/CONTRIBUTING.md#adding-a-new-agent) · [schema](https://github.com/agentclientprotocol/registry/blob/main/agent.schema.json)
-- An npm distribution must use an existing package, pin the submitted version, and avoid `@latest`. The package version must match the entry version. [Distribution validation](https://github.com/agentclientprotocol/registry/blob/main/CONTRIBUTING.md#distribution-validation)
-- Every entry needs a square 16×16 SVG using only `currentColor`, `none`, or `inherit` for fills and strokes. [Icon validation](https://github.com/agentclientprotocol/registry/blob/main/CONTRIBUTING.md#icon-validation)
-- The launched agent must return at least one `agent` or `terminal` authentication method from ACP `initialize`. [Authentication requirements](https://github.com/agentclientprotocol/registry/blob/main/AUTHENTICATION.md)
-- Registry CI validates the schema, package accessibility, process startup, and authentication handshake. [Local validation](https://github.com/agentclientprotocol/registry/blob/main/CONTRIBUTING.md#run-validation-locally)
-- Registry versions are checked hourly against npm, PyPI, and GitHub Releases. [Automatic updates](https://github.com/agentclientprotocol/registry/blob/main/CONTRIBUTING.md#automatic-version-updates)
+MagPi ACP is ready for a registry submission candidate:
 
-## MagPi ACP status
+- `magpi-acp` is a valid and currently unused registry ID.
+- `magpi-acp@0.1.0` is public on npm and pins Node.js 22 or newer.
+- The source repository and MIT license are public under `digital-overground/magpi-acp`.
+- The ACP `initialize` response identifies MagPi ACP and returns standard Terminal Auth fields.
+- `--terminal-login` launches Pi's interactive authentication flow.
+- `icon.svg` is square, 16×16, and monochrome with `currentColor`.
+- The npm package dry-run includes the executable, built runtime, README, and license.
 
-Ready:
+The registry validates the manifest, icon, published package, process startup, and authentication handshake. After acceptance, its hourly updater tracks new npm releases automatically.
 
-- `magpi-acp` is a valid and currently unique registry ID.
-- `package.json` uses semantic version `0.1.0`, package name `magpi-acp`, executable `magpi-acp`, and MIT licensing.
-- The ACP initialize response identifies `MagPi ACP` version `0.1.0` and returns standard Terminal Auth fields.
-- Tests, type checking, linting, build, smoke handshake, and npm package dry-run pass.
-- The README is ACP-client-neutral and documents npx, source, authentication, configuration, and Pi prerequisites.
-- `icon.svg` is a 16×16 monochrome `currentColor` magpie silhouette.
-- A temporary `magpi-acp` registry entry passes the registry build and icon validation with URL checks disabled.
-- The registry authentication client accepts the built adapter's Terminal Auth response.
+## Submission manifest
 
-Required before submission:
-
-1. Make `digital-overground/magpi-acp` public.
-2. Authenticate npm and publish `magpi-acp@0.1.0`.
-3. Copy `icon.svg` and the entry below into a registry fork.
-4. Run registry validation against the published package and submit the pull request.
+Create `magpi-acp/agent.json` in a fork of [`agentclientprotocol/registry`](https://github.com/agentclientprotocol/registry):
 
 ```json
 {
   "id": "magpi-acp",
   "name": "MagPi ACP",
   "version": "0.1.0",
-  "description": "ACP adapter for the Pi coding agent with roles, plans, elicitation, session titles, and tree navigation",
+  "description": "ACP adapter for the Pi coding agent",
   "repository": "https://github.com/digital-overground/magpi-acp",
+  "website": "https://github.com/digital-overground/magpi-acp#readme",
   "authors": ["Kyle Humphrey"],
   "license": "MIT",
+  "license_url": "https://github.com/digital-overground/magpi-acp/blob/main/LICENSE",
   "distribution": {
     "npx": {
       "package": "magpi-acp@0.1.0"
@@ -48,4 +39,18 @@ Required before submission:
 }
 ```
 
-The registry does not impose requirements on an agent repository's README. Its checks apply to the registry entry, distribution, icon, launch behavior, and authentication handshake; the README changes are for accurate public documentation.
+Copy the repository's `icon.svg` beside the manifest.
+
+## Remaining work
+
+1. Test the manifest with the registry's local validation, including its live authentication check.
+2. Verify the registry-installed `npx` package can find `pi`. MagPi currently documents Pi as a separately installed prerequisite; if registry clients do not preserve a usable `pi` on `PATH`, package or resolve that dependency before submission.
+3. Test installation and Terminal Auth from Zed using the registry fork or generated registry output.
+4. Submit the registry pull request and address CI or review feedback.
+5. After merge, confirm Zed installs `magpi-acp` and that a later npm release is picked up by the registry updater.
+
+## References
+
+- [Registry contribution guide](https://github.com/agentclientprotocol/registry/blob/main/CONTRIBUTING.md)
+- [Registry authentication requirements](https://github.com/agentclientprotocol/registry/blob/main/AUTHENTICATION.md)
+- [Registry agent schema](https://github.com/agentclientprotocol/registry/blob/main/agent.schema.json)

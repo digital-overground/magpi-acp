@@ -3,86 +3,80 @@
 An [Agent Client Protocol](https://agentclientprotocol.com) adapter for the [Pi coding agent](https://github.com/earendil-works/pi-mono).
 
 ```text
-ACP client → magpi-acp → Pi RPC → selected model
+ACP client → MagPi ACP → Pi RPC → selected model
 ```
 
-MagPi ACP speaks ACP JSON-RPC over stdio and runs Pi in `--mode rpc`.
+MagPi ACP speaks ACP v1 JSON-RPC over stdio and runs Pi in `--mode rpc`. It works with ACP-compliant clients and integrations for editors such as Zed, VS Code, Sublime Text, and others.
 
-## Features
+## ACP support
 
-- Streams assistant text and thought output as ACP content.
-- Maps Pi tools to ACP tool calls with status, file locations, structured diffs, and terminal output.
-- Reports context usage and cost.
-- Lists, loads, and resumes Pi sessions stored under `~/.pi/agent/sessions`.
-- Loads Pi skills and file-based prompt commands.
-- Exposes native ACP role, model, and thinking controls.
-- Switches model and thinking level together through named roles in `~/.pi/agent/roles.json`.
-- Translates [`@juicesharp/rpiv-todo`](https://www.npmjs.com/package/@juicesharp/rpiv-todo) results into ACP plan updates and restores plans when sessions reload.
-- Maps Pi extension select, confirm, input, and editor requests to ACP elicitation.
-- Generates a 2–6 word session title from the first user message using the active model in an isolated no-session call.
-- Supports persistent manual titles with `/name <title>`.
-- Provides `/tree` navigation and rewind through Pi's native session tree.
-- Advertises ACP Terminal Auth for interactive Pi provider setup.
+MagPi exposes standard ACP behavior for:
+
+- creating, prompting, cancelling, listing, loading, and current-leaf forking of sessions;
+- streaming messages, thoughts, tool calls, plans, usage, and structured diffs;
+- model, thinking-level, and role configuration through session configuration options;
+- form elicitation for compatible Pi extension prompts;
+- Pi extension, skill, and prompt-template commands;
+- automatic first-prompt titles and persistent manual Pi session names;
+- Terminal Auth backed by Pi's authentication setup.
+
+Pi owns session IDs, session files, branch creation, command expansion, model state, and thinking state. MagPi discovers persisted sessions from Pi's configured session directory and translates between Pi RPC and ACP.
+
+## Ask User elicitation
+
+MagPi bundles a minimal Pi extension that registers the model-facing `ask_user` tool. `ask_user` is not a built-in Pi tool, and no separate `pi-ask-user` package is required when running through MagPi.
+
+```text
+model calls ask_user → Pi extension UI request → MagPi → ACP form elicitation → client response → Pi tool result
+```
+
+The Pi extension UI request is internal to MagPi's Pi subprocess. ACP clients see standard ACP elicitation rather than a MagPi-specific Ask User protocol. Clients that advertise form elicitation can render structured choices and free-form answers; option-only questions retain an ACP permission fallback for clients without form support.
+
+The bundled tool intentionally omits the external package's terminal overlays and other standalone Pi TUI features.
+
+## Mischief
+
+[Mischief](https://github.com/digital-overground/mischief) is the recommended way to use MagPi. It provides polished multi-thread workspaces, Pi session history, inline elicitation, integrated authentication, and other UI tailored to MagPi while preserving standard ACP behavior.
 
 ## Requirements
 
-Install these on the machine where MagPi ACP runs:
+Install these where your ACP client runs agents:
 
-- [Node.js](https://nodejs.org/) 22 or newer. `npm` is included with Node.js.
-- [Pi](https://github.com/earendil-works/pi-mono), installed as `pi` on `PATH`.
+- [Node.js](https://nodejs.org/) 22 or newer.
+- [Pi](https://github.com/earendil-works/pi-mono), available as `pi` on `PATH`.
 - A model provider configured through Pi.
-- An ACP client, such as Mischief, Zed, or another editor or tool that can launch a local ACP agent over stdio.
 
-Git is only needed for the clone-and-build installation below.
+For Remote SSH, Dev Containers, or WSL, install Node.js, Pi, and MagPi ACP in that remote environment.
 
 ## Install
 
-Install Pi and MagPi ACP:
+Install Pi and MagPi ACP globally:
 
 ```sh
 npm install -g @earendil-works/pi-coding-agent magpi-acp
 ```
 
-## ACP client configuration
+Configure your ACP client to launch `magpi-acp` from `PATH`. Mischief can install it during first-Thread setup; set `mischief.magpiAcpPath` to use another executable or a built `dist/index.js`.
 
-Configure your ACP client to launch the stdio process:
-
-```json
-{
-  "command": "magpi-acp",
-  "args": []
-}
-```
-
-The exact configuration format depends on the client.
-
-## Update
-
-Update the global installation:
+Update MagPi with:
 
 ```sh
 npm install -g magpi-acp@latest
 ```
 
-Restart the ACP agent process or open a new session after updating.
+Restart the ACP agent process after updating.
 
 ## Optional Pi extensions
 
-Install todo support for ACP plan updates:
+Install todo support for ACP plans:
 
 ```sh
 pi install npm:@juicesharp/rpiv-todo
 ```
 
-Install structured prompts for ACP elicitation:
-
-```sh
-pi install npm:pi-ask-user
-```
-
 ## Roles
 
-Create `~/.pi/agent/roles.json`:
+MagPi reads named role presets from `~/.pi/agent/roles.json` and exposes them as standard ACP session configuration options with category `mode`. Compatible clients, including Mischief and Zed, can display them alongside model and thinking controls:
 
 ```json
 {
@@ -101,18 +95,17 @@ Create `~/.pi/agent/roles.json`:
 }
 ```
 
-JSON key order controls role order. Selecting a role calls Pi's `set_model` and `set_thinking_level` RPC commands. Models shown above are examples; use provider and model IDs available in your Pi installation.
+Each role is a named preset that applies its model and thinking level together. ACP clients surface roles as a mode selector in the session controls; choose a role to switch both settings with one standard configuration update. MagPi reports the matching role as active whenever the current model and thinking level match a preset. Selecting a model or thinking level independently may leave no role selected.
+
+JSON key order controls role order. Use provider/model IDs available in your Pi installation and one of Pi's supported thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Restart the agent process after editing `roles.json` so clients receive the updated options.
 
 ## Commands
 
-### File-based commands
+Pi's `get_commands` response is the source of truth for extension, skill, and prompt-template commands. MagPi advertises that command list over ACP and passes invocations to Pi for native expansion. Pi discovers user prompts from `~/.pi/agent/prompts/**/*.md` and project prompts from `<cwd>/.pi/prompts/**/*.md`.
 
-- User commands: `~/.pi/agent/prompts/**/*.md`
-- Project commands: `<cwd>/.pi/prompts/**/*.md`
+MagPi additionally provides these adapter commands backed by explicit Pi RPC operations:
 
-### Adapter commands
-
-- `/compact [instructions...]` — compact the current session.
+- `/compact [instructions...]` — compact the current session context.
 - `/autocompact on|off|toggle` — configure automatic compaction.
 - `/export` — export the session to HTML.
 - `/session` — show session, message, token, and cost statistics.
@@ -120,21 +113,18 @@ JSON key order controls role order. Selecting a role calls Pi's `set_model` and 
 - `/steering all|one-at-a-time` — read or set Pi steering delivery.
 - `/follow-up all|one-at-a-time` — read or set Pi follow-up delivery.
 - `/changelog` — show Pi's changelog.
-- `/tree` — choose an earlier Pi session entry and continue from it.
 
-Skill commands are exposed when enabled in Pi settings. Pi extension commands are not advertised as ACP slash commands.
+Skill commands follow Pi's settings. The bundled internal tree-navigation bridge is not advertised as a composer command.
 
 ## Configuration
 
 Set `quietStartup: true` in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json` to suppress startup details. Update notices remain visible.
 
-Set `MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT=true` in the agent process environment to advertise embedded ACP resources. Without it, embedded resources degrade to plain-text context.
-
-Set `MAGPI_ACP_PI_COMMAND` to override the `pi` executable path.
+Set `MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT=true` when the client should be allowed to send embedded ACP resources. Set `MAGPI_ACP_PI_COMMAND` in the agent process environment to override the `pi` executable path.
 
 ## Authentication
 
-MagPi ACP advertises Terminal Auth in its ACP initialize response. To configure Pi interactively:
+When Pi needs authentication, clients with Terminal Auth support can launch MagPi ACP's setup flow. For manual setup:
 
 ```sh
 magpi-acp --terminal-login
@@ -146,23 +136,10 @@ Credentials remain managed by Pi and are not stored by MagPi ACP.
 
 ```sh
 npm ci
+npm run check
 ```
 
-```sh
-npm run dev
-```
-
-```sh
-npm test
-```
-
-```sh
-npm run typecheck
-```
-
-```sh
-npm run lint
-```
+Build before running the sibling Mischief development extension; Mischief automatically detects `../magpi-acp/dist/index.js`:
 
 ```sh
 npm run build
@@ -170,24 +147,22 @@ npm run build
 
 Project layout:
 
-- `src/acp` — ACP server and translation layer.
+- `src/acp` — client-facing ACP server and translation layer.
 - `src/pi-rpc` — Pi subprocess and RPC protocol wrapper.
-- `src/pi-extension` — bundled Pi extensions used by the adapter.
+- `src/pi-extension` — bundled Pi tools and session-tree integration.
 - `test` — unit and component tests.
-
-## Compatibility
-
-MagPi ACP uses standard ACP behavior where available. Optional `_meta` capabilities provide enhancements for clients that recognize them and are safe for other clients to ignore.
 
 ## Limitations
 
 - Pi reads, writes, and executes locally; ACP filesystem and terminal delegation are not implemented.
-- MCP servers supplied by the ACP client are retained in session state but not forwarded to Pi.
-- UI-only Pi extensions require ACP translation to render through an ACP client.
+- Non-empty MCP server configuration is retained in session state but is not forwarded to Pi.
+- Permanent ACP session deletion is not implemented; Pi session history remains on disk.
+- Targeted native forks accept Pi user-message entry IDs; assistant-message targets are unsupported.
+- Pi extension UI methods require an ACP translation before clients can render them.
 
 ## Attribution
 
-MagPi ACP is independently versioned from [`svkozak/pi-acp`](https://github.com/svkozak/pi-acp), the upstream project from which it was derived.
+MagPi ACP was originally derived from [Sergii Kozak's `pi-acp`](https://github.com/svkozak/pi-acp).
 
 ## License
 

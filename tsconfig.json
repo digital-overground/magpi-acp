@@ -4,6 +4,8 @@
     "lib": ["ES2022"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowJs": true,
+    "checkJs": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -13,5 +15,5 @@
 
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.mjs"]
 }

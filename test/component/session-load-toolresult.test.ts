@@ -1,67 +1,112 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
 
-import { MagPiAcpAgent } from '../../src/acp/agent.js'
-import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
-import { PiRpcProcess } from '../../src/pi-rpc/process.js'
+import { MagPiAcpAgent } from "../../src/acp/agent.js";
+import {
+  FakeAgentSideConnection,
+  FakePiRpcProcess,
+  asAgentConn,
+  asRecord,
+  mockPiSpawn,
+} from "../helpers/fakes.js";
 
-class FakeStore {
-  get(_sessionId: string) {
-    return { sessionId: 's1', cwd: '/tmp/project', sessionFile: '/tmp/s.jsonl', updatedAt: new Date().toISOString() }
-  }
-  upsert() {}
-}
+void test("MagPiAcpAgent: loadSession restores tool arguments from their assistant calls", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-tool-restore-"));
+  const sessionsDir = path.join(root, "sessions", "--tmp--project--");
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  mkdirSync(sessionsDir, { recursive: true });
+  writeFileSync(
+    path.join(sessionsDir, "0000_s1.jsonl"),
+    `${JSON.stringify({ cwd: "/tmp/project", id: "s1", type: "session" })}\n`,
+    "utf-8"
+  );
+  process.env.PI_CODING_AGENT_DIR = root;
 
-test('MagPiAcpAgent: loadSession replays toolResult as tool_call + tool_call_update', async () => {
-  const originalSpawn = PiRpcProcess.spawn
-  ;(PiRpcProcess as any).spawn = async () => {
-    return {
-      onEvent: () => () => {},
-      getMessages: async () => ({
-        messages: [
+  const proc = new FakePiRpcProcess();
+  proc.availableModels = { models: [] };
+  proc.messages = {
+    messages: [
+      {
+        content: [
           {
-            role: 'toolResult',
-            toolCallId: 'call_1',
-            toolName: 'bash',
-            args: { command: 'echo hello' },
-            content: [{ type: 'text', text: 'hello from bash' }],
-            isError: false
-          }
-        ]
-      }),
-      getAvailableModels: async () => ({ models: [] }),
-      getState: async () => ({ thinkingLevel: 'medium' })
-    } as any
-  }
+            arguments: { command: "echo hello" },
+            id: "call_1",
+            name: "bash",
+            type: "toolCall",
+          },
+          {
+            arguments: { path: "src/a.ts" },
+            id: "call_2",
+            name: "read",
+            type: "toolCall",
+          },
+        ],
+        role: "assistant",
+      },
+      {
+        content: [{ text: "hello from bash", type: "text" }],
+        isError: false,
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "bash",
+      },
+      {
+        content: [{ text: "contents", type: "text" }],
+        isError: false,
+        role: "toolResult",
+        toolCallId: "call_2",
+        toolName: "read",
+      },
+    ],
+  };
+  proc.state = { thinkingLevel: "medium" };
+  const restoreSpawn = mockPiSpawn(async () => {
+    await Promise.resolve();
+    return proc.process;
+  });
 
   try {
-    const conn = new FakeAgentSideConnection()
-    const agent = new MagPiAcpAgent(asAgentConn(conn))
-    ;(agent as any).store = new FakeStore()
+    const conn = new FakeAgentSideConnection();
+    const agent = new MagPiAcpAgent(asAgentConn(conn));
 
-    await agent.loadSession({ sessionId: 's1', cwd: '/tmp/project', mcpServers: [] } as any)
+    await agent.loadSession({
+      cwd: "/tmp/project",
+      mcpServers: [],
+      sessionId: "s1",
+    });
 
-    const updates = conn.updates.map(u => (u as any).update)
+    const updates = conn.updates.map((entry) => asRecord(entry.update));
+    const toolCall = (id: string) =>
+      updates.find(
+        (update) =>
+          update.sessionUpdate === "tool_call" && update.toolCallId === id
+      );
+    const bash = toolCall("call_1");
+    assert.ok(bash);
+    assert.equal(bash.title, "echo hello");
+    assert.equal(bash.kind, "execute");
+    assert.deepEqual(bash.content, [
+      { terminalId: "call_1", type: "terminal" },
+    ]);
+    assert.deepEqual(bash._meta, {
+      terminal_info: { cwd: "/tmp/project", terminal_id: "call_1" },
+    });
 
-    const toolCall = updates.find(u => u?.sessionUpdate === 'tool_call')
-    assert.ok(toolCall)
-    assert.equal(toolCall.toolCallId, 'call_1')
-    assert.equal(toolCall.title, 'echo hello')
-    assert.equal(toolCall.kind, 'execute')
-    assert.deepEqual(toolCall.content, [{ type: 'terminal', terminalId: 'call_1' }])
-    assert.deepEqual(toolCall._meta, { terminal_info: { terminal_id: 'call_1', cwd: '/tmp/project' } })
-    assert.equal(toolCall.rawOutput, undefined)
-
-    const toolCallUpdate = updates.find(u => u?.sessionUpdate === 'tool_call_update')
-    assert.ok(toolCallUpdate)
-    assert.equal(toolCallUpdate.toolCallId, 'call_1')
-    assert.equal(toolCallUpdate.status, 'completed')
-    assert.deepEqual(toolCallUpdate._meta, {
-      terminal_output: { terminal_id: 'call_1', data: 'hello from bash' },
-      terminal_exit: { terminal_id: 'call_1', exit_code: 0, signal: null }
-    })
-    assert.equal(toolCallUpdate.rawOutput, undefined)
+    const read = toolCall("call_2");
+    assert.ok(read);
+    assert.equal(read.title, "read");
+    assert.equal(read.kind, "read");
+    assert.deepEqual(read.rawInput, { path: "src/a.ts" });
+    assert.deepEqual(read.locations, [{ path: "/tmp/project/src/a.ts" }]);
   } finally {
-    PiRpcProcess.spawn = originalSpawn
+    restoreSpawn();
+    if (previousAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    }
   }
-})
+});

@@ -1,11 +1,14 @@
 name: Publish Package
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   id-token: write # Required for OIDC
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -15,11 +18,17 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '24.x'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
 
       - run: npm install -g npm@latest
 
       - run: npm ci
       - run: npm run check
-      - run: npm publish --access public --provenance
+      - name: Publish and tag
+        run: |
+          TAG="v$(node -p "require('./package.json').version")"
+          git fetch --tags
+          git tag "$TAG"
+          npm publish --access public --provenance
+          git push origin "$TAG"

@@ -1,205 +1,214 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import registerMagPiAcpTree from '../../src/pi-extension/tree.js'
-import {
-  MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND,
-  MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND,
-  MAGPI_ACP_TREE_COMMAND
-} from '../../src/pi-rpc/tree-command.js'
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
-type RegisteredCommand = {
-  handler(args: string, context: any): Promise<void>
+import registerMagPiAcpTree from "../../src/pi-extension/tree.js";
+import { PiRpcProcess } from "../../src/pi-rpc/process.js";
+import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from "../../src/pi-rpc/tree-command.js";
+import type { TreeNavigationOptions } from "../../src/pi-rpc/tree-command.js";
+
+interface TreeContext {
+  navigateTree: (
+    entryId: string,
+    options: TreeNavigationOptions
+  ) => Promise<{ cancelled: boolean }>;
+  waitForIdle: () => Promise<void>;
 }
 
-function loadTreeCommand(): RegisteredCommand {
-  const registeredCommands = new Map<string, RegisteredCommand>()
-
-  registerMagPiAcpTree({
-    registerCommand(name, command) {
-      registeredCommands.set(name, command)
-    },
-    on() {},
-    appendEntry() {}
-  })
-
-  const registeredCommand = registeredCommands.get(MAGPI_ACP_TREE_COMMAND)
-  assert.ok(registeredCommand)
-  return registeredCommand
+interface TreeCommand {
+  handler: (args: string, context: TreeContext) => Promise<void>;
 }
 
-test('Pi tree extension maps an ACP client message ID and rewinds with native tree navigation', async () => {
-  const commands = new Map<string, RegisteredCommand>()
-  let turnStart: ((event: unknown, context: any) => void | Promise<void>) | undefined
-  const customEntries: Array<{ customType: string; data: unknown }> = []
+const ignoreEvent = (_event: Record<string, unknown>): void => undefined;
 
+const piProcessFrom = (instance: unknown): PiRpcProcess => {
+  if (!(instance instanceof PiRpcProcess)) {
+    throw new TypeError("Could not construct Pi RPC process");
+  }
+  return instance;
+};
+
+void test("Pi tree extension passes every summary choice to navigateTree", async () => {
+  const commands = new Map<string, TreeCommand>();
   registerMagPiAcpTree({
     registerCommand(name, command) {
-      commands.set(name, command)
+      commands.set(name, command);
     },
-    on(_event, handler) {
-      turnStart = handler
+  });
+  assert.deepEqual([...commands.keys()], [MAGPI_ACP_NAVIGATE_TREE_COMMAND]);
+
+  const command = commands.get(MAGPI_ACP_NAVIGATE_TREE_COMMAND);
+  assert.ok(command);
+  const calls: unknown[] = [];
+  const context: TreeContext = {
+    navigateTree: async (entryId, options) => {
+      await Promise.resolve();
+      calls.push({ entryId, options });
+      return { cancelled: false };
     },
-    appendEntry(customType, data) {
-      customEntries.push({ customType, data })
-    }
-  })
+    waitForIdle: async () => {
+      await Promise.resolve();
+      calls.push("idle");
+    },
+  };
+  const customInstructions = 'Keep "quoted" details.\nFocus on paths.';
 
-  const mark = commands.get(MAGPI_ACP_MARK_CLIENT_MESSAGE_COMMAND)
-  const rewind = commands.get(MAGPI_ACP_REWIND_CLIENT_MESSAGE_COMMAND)
-  assert.ok(mark)
-  assert.ok(rewind)
-  assert.ok(turnStart)
+  await command.handler(
+    JSON.stringify({ entryId: "pi-assistant-1", summarize: false }),
+    context
+  );
+  await command.handler(
+    JSON.stringify({ entryId: "pi-assistant-1", summarize: true }),
+    context
+  );
+  await command.handler(
+    JSON.stringify({
+      customInstructions,
+      entryId: "pi-assistant-1",
+      summarize: true,
+    }),
+    context
+  );
 
-  await mark.handler('client-message-1', {} as any)
-  await turnStart({}, { sessionManager: { getLeafId: () => 'pi-user-1' } })
-
-  assert.deepEqual(customEntries, [
+  assert.deepEqual(calls, [
+    "idle",
     {
-      customType: 'magpi-acp-client-message',
-      data: { clientMessageId: 'client-message-1', userEntryId: 'pi-user-1' }
-    }
-  ])
-
-  const navigations: Array<{ targetId: string; options: unknown }> = []
-  await rewind.handler('client-message-1', {
-    waitForIdle: async () => {},
-    sessionManager: {
-      getEntries: () => [
-        {
-          id: 'mapping-1',
-          parentId: 'pi-user-1',
-          type: 'custom',
-          customType: 'magpi-acp-client-message',
-          data: { clientMessageId: 'client-message-1', userEntryId: 'pi-user-1' }
-        }
-      ],
-      getEntry: () => undefined
+      entryId: "pi-assistant-1",
+      options: { customInstructions: undefined, summarize: false },
     },
-    navigateTree: async (targetId: string, options: unknown) => {
-      navigations.push({ targetId, options })
-      return { cancelled: false }
-    }
-  } as any)
-
-  assert.deepEqual(navigations, [{ targetId: 'pi-user-1', options: { summarize: false } }])
-})
-
-test('Pi tree extension navigates to a selected user message without summarizing', async () => {
-  const command = loadTreeCommand()
-  const notifications: string[] = []
-  const navigations: Array<{ targetId: string; options: unknown }> = []
-  let treeOptions: string[] = []
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000 - 5_000).toISOString()
-
-  await command.handler('', {
-    waitForIdle: async () => {},
-    sessionManager: {
-      getLeafId: () => 'assistant-2',
-      getTree: () => [
-        {
-          entry: {
-            id: 'user-1',
-            parentId: null,
-            type: 'message',
-            timestamp: fiveMinutesAgo,
-            message: { role: 'user', content: [{ type: 'text', text: 'First request' }] }
-          },
-          children: [
-            {
-              entry: {
-                id: 'assistant-1',
-                parentId: 'user-1',
-                type: 'message',
-                message: { role: 'assistant', content: [{ type: 'text', text: 'First response' }] }
-              },
-              children: [
-                {
-                  entry: {
-                    id: 'user-2',
-                    parentId: 'assistant-1',
-                    type: 'message',
-                    message: { role: 'user', content: [{ type: 'text', text: 'Second request' }] }
-                  },
-                  children: [
-                    {
-                      entry: {
-                        id: 'assistant-2',
-                        parentId: 'user-2',
-                        type: 'message',
-                        message: { role: 'assistant', content: [{ type: 'text', text: 'Second response' }] }
-                      },
-                      children: []
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
-      ]
+    "idle",
+    {
+      entryId: "pi-assistant-1",
+      options: { customInstructions: undefined, summarize: true },
     },
-    ui: {
-      select: async (title: string, options: string[]) => {
-        if (title.startsWith('Choose where')) {
-          treeOptions = options
-          return options.find(option => option.includes('Second request'))
-        }
-        return 'No summary'
+    "idle",
+    {
+      entryId: "pi-assistant-1",
+      options: { customInstructions, summarize: true },
+    },
+  ]);
+});
+
+void test("Pi tree extension reports native cancellation", async () => {
+  let command: TreeCommand | undefined;
+  registerMagPiAcpTree({
+    registerCommand(_name, registered) {
+      command = registered;
+    },
+  });
+
+  assert.ok(command);
+  await assert.rejects(
+    command.handler(
+      JSON.stringify({ entryId: "pi-user-1", summarize: false }),
+      {
+        navigateTree: async () => {
+          await Promise.resolve();
+          return { cancelled: true };
+        },
+        waitForIdle: async () => {
+          await Promise.resolve();
+        },
+      }
+    ),
+    /cancelled tree navigation/iu
+  );
+});
+
+void test("Pi tree extension surfaces a summary failure without retrying", async () => {
+  let command: TreeCommand | undefined;
+  registerMagPiAcpTree({
+    registerCommand(_name, registered) {
+      command = registered;
+    },
+  });
+
+  assert.ok(command);
+  let attempts = 0;
+  await assert.rejects(
+    command.handler(JSON.stringify({ entryId: "pi-user-1", summarize: true }), {
+      navigateTree: async () => {
+        attempts += 1;
+        await Promise.resolve();
+        throw new Error("summary failed");
       },
-      editor: async () => undefined,
-      notify: (message: string) => notifications.push(message)
-    },
-    navigateTree: async (targetId: string, options: unknown) => {
-      navigations.push({ targetId, options })
-      return { cancelled: false }
-    }
-  })
+      waitForIdle: async () => {
+        await Promise.resolve();
+      },
+    }),
+    /summary failed/u
+  );
+  assert.equal(attempts, 1);
+});
 
-  assert.deepEqual(navigations, [
-    {
-      targetId: 'user-2',
-      options: { summarize: false, customInstructions: undefined }
-    }
-  ])
-  assert.match(notifications.at(-1) ?? '', /active context moved before/i)
-  assert.match(notifications.at(-1) ?? '', /remain visible in the client/i)
+void test("Pi RPC tree navigation completes without an agent_settled event", async () => {
+  let prompt = "";
+  const instance: unknown = Object.create(PiRpcProcess.prototype);
+  const proc = piProcessFrom(instance);
+  proc.onEvent = () => () => {};
+  proc.prompt = async (message: string) => {
+    prompt = message;
+    await Promise.resolve();
+  };
+
+  const customInstructions = "Preserve whitespace:\n  exact";
+  await Promise.race([
+    proc.navigateTree("pi-assistant-1", {
+      customInstructions,
+      summarize: true,
+    }),
+    delay(50).then(() => {
+      throw new Error("Tree navigation stayed pending.");
+    }),
+  ]);
+
   assert.equal(
-    treeOptions.some(option => option.includes('↳')),
-    false
-  )
-  assert.match(treeOptions[0] ?? '', /^You: First request · 5 mins$/)
-})
+    prompt,
+    `/${MAGPI_ACP_NAVIGATE_TREE_COMMAND} ${JSON.stringify({
+      customInstructions,
+      entryId: "pi-assistant-1",
+      summarize: true,
+    })}`
+  );
+});
 
-test('Pi tree extension leaves the session unchanged when selection is cancelled', async () => {
-  const command = loadTreeCommand()
-  let navigationCount = 0
+void test("Pi RPC tree navigation surfaces extension errors without an agent_settled event", async () => {
+  let emit: (event: Record<string, unknown>) => void = ignoreEvent;
+  const instance: unknown = Object.create(PiRpcProcess.prototype);
+  const proc = piProcessFrom(instance);
+  proc.onEvent = (handler) => {
+    emit = handler;
+    return () => {};
+  };
+  proc.prompt = async () => {
+    emit({ error: "summary failed", type: "extension_error" });
+    await Promise.resolve();
+  };
 
-  await command.handler('', {
-    waitForIdle: async () => {},
-    sessionManager: {
-      getLeafId: () => 'user-1',
-      getTree: () => [
-        {
-          entry: {
-            id: 'user-1',
-            parentId: null,
-            type: 'message',
-            message: { role: 'user', content: 'First request' }
-          },
-          children: []
-        }
-      ]
-    },
-    ui: {
-      select: async () => undefined,
-      editor: async () => undefined,
-      notify: () => {}
-    },
-    navigateTree: async () => {
-      navigationCount += 1
-      return { cancelled: false }
-    }
-  })
+  await assert.rejects(
+    proc.navigateTree("pi-assistant-1", { summarize: true }),
+    /summary failed/u
+  );
+});
 
-  assert.equal(navigationCount, 0)
-})
+void test("Pi RPC rejects a closed stdin write without crashing MagPi", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      "require('node:fs').closeSync(0); console.log('ready'); setTimeout(() => {}, 10_000)",
+    ],
+    { stdio: "pipe" }
+  );
+  const instance: unknown = Reflect.construct(PiRpcProcess, [child]);
+  const proc = piProcessFrom(instance);
+
+  try {
+    await once(child.stdout, "data");
+    await assert.rejects(proc.getState(), /EPIPE|closed|destroyed/iu);
+  } finally {
+    proc.dispose();
+  }
+});
