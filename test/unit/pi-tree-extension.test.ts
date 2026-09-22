@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import test from 'node:test'
 import registerMagPiAcpTree from '../../src/pi-extension/tree.js'
 import { PiRpcProcess } from '../../src/pi-rpc/process.js'
@@ -125,4 +127,20 @@ test('Pi RPC tree navigation surfaces extension errors without an agent_settled 
   }
 
   await assert.rejects(proc.navigateTree('pi-assistant-1', { summarize: true }), /summary failed/)
+})
+
+test('Pi RPC rejects a closed stdin write without crashing MagPi', async () => {
+  const child = spawn(
+    process.execPath,
+    ['-e', "require('node:fs').closeSync(0); console.log('ready'); setTimeout(() => {}, 10_000)"],
+    { stdio: 'pipe' }
+  )
+  const proc = Reflect.construct(PiRpcProcess, [child]) as PiRpcProcess
+
+  try {
+    await once(child.stdout, 'data')
+    await assert.rejects(proc.getState(), /EPIPE|closed|destroyed/i)
+  } finally {
+    proc.dispose()
+  }
 })

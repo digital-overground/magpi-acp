@@ -159,6 +159,11 @@ export class PiRpcProcess {
       for (const [, p] of this.pending) p.reject(err)
       this.pending.clear()
     })
+
+    child.stdin.on('error', err => {
+      for (const [, p] of this.pending) p.reject(err)
+      this.pending.clear()
+    })
   }
 
   static async spawn(params: SpawnParams): Promise<PiRpcProcess> {
