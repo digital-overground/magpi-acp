@@ -3,7 +3,8 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   entry: {
     index: 'src/index.ts',
-    'pi-tree-extension': 'src/pi-extension/tree.ts'
+    'pi-tree-extension': 'src/pi-extension/tree.ts',
+    'pi-ask-user-extension': 'src/pi-extension/ask-user.ts'
   },
   format: ['esm'],
   platform: 'node',

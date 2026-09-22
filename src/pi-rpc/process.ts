@@ -96,14 +96,19 @@ type SpawnParams = {
   sessionPath?: string
 }
 
-function treeExtensionPath(): string {
-  const bundledPath = fileURLToPath(new URL('./pi-tree-extension.js', import.meta.url))
-  if (existsSync(bundledPath)) return bundledPath
+function bundledExtensionPaths(): string[] {
+  return [
+    ['pi-tree-extension.js', '../pi-extension/tree.ts'],
+    ['pi-ask-user-extension.js', '../pi-extension/ask-user.ts']
+  ].map(([bundle, source]) => {
+    const bundledPath = fileURLToPath(new URL(bundle, import.meta.url))
+    if (existsSync(bundledPath)) return bundledPath
 
-  const sourcePath = fileURLToPath(new URL('../pi-extension/tree.ts', import.meta.url))
-  if (existsSync(sourcePath)) return sourcePath
+    const sourcePath = fileURLToPath(new URL(source, import.meta.url))
+    if (existsSync(sourcePath)) return sourcePath
 
-  throw new PiRpcSpawnError('Could not locate the bundled magpi-acp tree extension.')
+    throw new PiRpcSpawnError(`Could not locate the bundled magpi-acp extension: ${bundle}`)
+  })
 }
 
 export class PiRpcProcess {
@@ -164,7 +169,12 @@ export class PiRpcProcess {
     // - themes are irrelevant in rpc mode and can be noisy/slow to load.
     // Keep extensions + prompt templates enabled because ACP users may rely on them
     // (e.g. MCP extensions, prompt templates for workflows).
-    const args = ['--mode', 'rpc', '--no-themes', '--extension', treeExtensionPath()]
+    const args = [
+      '--mode',
+      'rpc',
+      '--no-themes',
+      ...bundledExtensionPaths().flatMap(extension => ['--extension', extension])
+    ]
     if (params.sessionPath) args.push('--session', params.sessionPath)
 
     const child = spawn(cmd, args, {

@@ -22,6 +22,18 @@ MagPi exposes standard ACP behavior for:
 
 Pi owns session IDs, session files, branch creation, command expansion, model state, and thinking state. MagPi discovers persisted sessions from Pi's configured session directory and translates between Pi RPC and ACP.
 
+## Ask User elicitation
+
+MagPi bundles a minimal Pi extension that registers the model-facing `ask_user` tool. `ask_user` is not a built-in Pi tool, and no separate `pi-ask-user` package is required when running through MagPi.
+
+```text
+model calls ask_user → Pi extension UI request → MagPi → ACP form elicitation → client response → Pi tool result
+```
+
+The Pi extension UI request is internal to MagPi's Pi subprocess. ACP clients see standard ACP elicitation rather than a MagPi-specific Ask User protocol. Clients that advertise form elicitation can render structured choices and free-form answers; option-only questions retain an ACP permission fallback for clients without form support.
+
+The bundled tool intentionally omits the external package's terminal overlays and other standalone Pi TUI features.
+
 ## Mischief
 
 [Mischief](https://github.com/digital-overground/mischief) is the recommended way to use MagPi. It provides polished multi-thread workspaces, Pi session history, inline elicitation, integrated authentication, and other UI tailored to MagPi while preserving standard ACP behavior.
@@ -60,12 +72,6 @@ Install todo support for ACP plans:
 
 ```sh
 pi install npm:@juicesharp/rpiv-todo
-```
-
-Install structured prompts for inline elicitation:
-
-```sh
-pi install npm:pi-ask-user
 ```
 
 ## Roles
@@ -143,7 +149,7 @@ Project layout:
 
 - `src/acp` — client-facing ACP server and translation layer.
 - `src/pi-rpc` — Pi subprocess and RPC protocol wrapper.
-- `src/pi-extension` — bundled Pi session-tree integration.
+- `src/pi-extension` — bundled Pi tools and session-tree integration.
 - `test` — unit and component tests.
 
 ## Limitations
