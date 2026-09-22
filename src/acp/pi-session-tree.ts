@@ -4,6 +4,7 @@ type SessionEntry = {
   id?: unknown
   parentId?: unknown
   type?: unknown
+  summary?: unknown
   message?: {
     role?: unknown
     [key: string]: unknown
@@ -53,7 +54,11 @@ export function activeSessionMessages(sessionFile: string): ActiveSessionMessage
   }
 
   path.reverse()
-  return path.flatMap(entry =>
-    entry.type === 'message' && entry.message ? [{ id: entry.id, message: entry.message }] : []
-  )
+  return path.flatMap(entry => {
+    if (entry.type === 'message' && entry.message) return [{ id: entry.id, message: entry.message }]
+    if (entry.type === 'branch_summary' && typeof entry.summary === 'string') {
+      return [{ id: entry.id, message: { role: 'branchSummary', content: entry.summary } }]
+    }
+    return []
+  })
 }

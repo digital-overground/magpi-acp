@@ -234,9 +234,9 @@ test('MagPiAcpAgent: tree picker returns Pi native tree and leaf unchanged', asy
   })
 })
 
-test('MagPiAcpAgent: tree navigation uses a native message ID and keeps the session identity', async () => {
+test('MagPiAcpAgent: tree navigation passes summary choices and keeps the session identity', async () => {
   const proc = new FakePiRpcProcess() as any
-  const navigations: string[] = []
+  const navigations: Array<{ entryId: string; options: unknown }> = []
   const tree = [
     {
       entry: {
@@ -249,18 +249,99 @@ test('MagPiAcpAgent: tree navigation uses a native message ID and keeps the sess
   ]
   proc.getTree = async () => ({ tree, leafId: navigations.length ? 'pi-user-1' : 'pi-assistant-2' })
   proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl', sessionId: 's1' })
-  proc.navigateTree = async (entryId: string) => navigations.push(entryId)
+  proc.navigateTree = async (entryId: string, options: unknown) => navigations.push({ entryId, options })
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+  const customInstructions = 'Focus on auth paths.\nKeep exact errors.'
+  const choices = [
+    { params: {}, options: { summarize: false, customInstructions: undefined } },
+    { params: { summarize: false }, options: { summarize: false, customInstructions: undefined } },
+    { params: { summarize: true }, options: { summarize: true, customInstructions: undefined } },
+    {
+      params: { summarize: true, customInstructions },
+      options: { summarize: true, customInstructions }
+    }
+  ]
+
+  for (const choice of choices) {
+    assert.deepEqual(
+      await agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
+        sessionId: 's1',
+        entryId: 'pi-user-1',
+        ...choice.params
+      }),
+      { leafId: 'pi-user-1', draft: 'Fix login' }
+    )
+  }
+  assert.deepEqual(
+    navigations,
+    choices.map(({ options }) => ({ entryId: 'pi-user-1', options }))
+  )
+})
+
+test('MagPiAcpAgent: tree navigation rejects malformed summary options before invoking Pi', async () => {
+  const proc = new FakePiRpcProcess() as any
+  let piCalls = 0
+  proc.getTree = async () => {
+    piCalls += 1
+    return { tree: [], leafId: null }
+  }
+  proc.getState = async () => {
+    piCalls += 1
+    return {}
+  }
+  proc.navigateTree = async () => {
+    piCalls += 1
+  }
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
   ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
 
-  assert.deepEqual(
-    await agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
+  for (const options of [{ summarize: 'true' }, { customInstructions: ['focus'] }]) {
+    await assert.rejects(
+      agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
+        sessionId: 's1',
+        entryId: 'pi-user-1',
+        ...options
+      }),
+      { code: -32602 }
+    )
+  }
+  assert.equal(piCalls, 0)
+})
+
+test('MagPiAcpAgent: tree navigation surfaces summary failure without changing the leaf', async () => {
+  const proc = new FakePiRpcProcess() as any
+  const tree = [
+    {
+      entry: {
+        id: 'pi-user-1',
+        type: 'message',
+        message: { role: 'user', content: 'Fix login' }
+      },
+      children: []
+    }
+  ]
+  const activeLeaf = 'pi-assistant-2'
+  let attempts = 0
+  proc.getTree = async () => ({ tree, leafId: activeLeaf })
+  proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl', sessionId: 's1' })
+  proc.navigateTree = async () => {
+    attempts += 1
+    throw new Error('branch summary failed')
+  }
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
+  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+
+  await assert.rejects(
+    agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
       sessionId: 's1',
-      entryId: 'pi-user-1'
+      entryId: 'pi-user-1',
+      summarize: true
     }),
-    { leafId: 'pi-user-1', draft: 'Fix login' }
+    /branch summary failed/
   )
-  assert.deepEqual(navigations, ['pi-user-1'])
+  assert.equal(attempts, 1)
+  assert.equal((await proc.getTree()).leafId, activeLeaf)
 })
 
 test('MagPiAcpAgent: tree navigation rejects non-message and stale entry IDs', async () => {

@@ -35,9 +35,15 @@ test('activeSessionMessages returns only messages on the latest branch', () => {
       message: { role: 'assistant', content: 'new answer' }
     },
     {
+      type: 'branch_summary',
+      id: 'branch-summary-1',
+      parentId: 'assistant-2',
+      summary: 'The abandoned branch changed the adapter.'
+    },
+    {
       type: 'compaction',
       id: 'compaction-1',
-      parentId: 'assistant-2',
+      parentId: 'branch-summary-1',
       summary: 'Compacted context'
     },
     {
@@ -49,8 +55,13 @@ test('activeSessionMessages returns only messages on the latest branch', () => {
   ]
   writeFileSync(sessionFile, entries.map(entry => JSON.stringify(entry)).join('\n'))
 
+  const messages = activeSessionMessages(sessionFile)
   assert.deepEqual(
-    activeSessionMessages(sessionFile).map(entry => entry.id),
-    ['user-1', 'assistant-2', 'user-2']
+    messages.map(entry => entry.id),
+    ['user-1', 'assistant-2', 'branch-summary-1', 'user-2']
   )
+  assert.deepEqual(messages[2]?.message, {
+    role: 'branchSummary',
+    content: 'The abandoned branch changed the adapter.'
+  })
 })

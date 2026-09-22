@@ -45,10 +45,17 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
         message: { role: 'assistant', content: [{ type: 'text', text: 'Hi there!' }] }
       }),
       JSON.stringify({
-        type: 'message',
-        id: 'c3d4e5f6',
+        type: 'branch_summary',
+        id: 'branch-summary-1',
         parentId: 'b2c3d4e5',
         timestamp: '2026-02-11T00:00:03.000Z',
+        summary: 'Preserve the adapter decision.'
+      }),
+      JSON.stringify({
+        type: 'message',
+        id: 'c3d4e5f6',
+        parentId: 'branch-summary-1',
+        timestamp: '2026-02-11T00:00:04.000Z',
         message: {
           role: 'toolResult',
           toolName: 'todo',
@@ -61,7 +68,7 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
         type: 'session_info',
         id: 'd4e5f6a7',
         parentId: 'c3d4e5f6',
-        timestamp: '2026-02-11T00:00:04.000Z',
+        timestamp: '2026-02-11T00:00:05.000Z',
         name: 'My Named Session'
       })
     ].join('\n') + '\n',
@@ -70,7 +77,7 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
 
   assert.deepEqual(
     activeSessionMessages(sessionFile).map(entry => entry.id),
-    ['a1b2c3d4', 'b2c3d4e5', 'c3d4e5f6']
+    ['a1b2c3d4', 'b2c3d4e5', 'branch-summary-1', 'c3d4e5f6']
   )
 
   const oldEnv = process.env.PI_CODING_AGENT_DIR
@@ -121,6 +128,17 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
       assert.ok(texts.some(t => t.kind === 'user_message_chunk' && t.messageId === undefined && t.text === 'Hello'))
       assert.ok(
         texts.some(t => t.kind === 'agent_message_chunk' && t.messageId === undefined && t.text === 'Hi there!')
+      )
+      assert.deepEqual(
+        conn.updates.find(update => update._meta?.['magpi-acp/branch-summary'] === true),
+        {
+          sessionId: 'sess-1',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: 'Preserve the adapter decision.' }
+          },
+          _meta: { 'magpi-acp/branch-summary': true }
+        }
       )
       assert.deepEqual(conn.updates.find(update => update.update.sessionUpdate === 'plan')?.update, {
         sessionUpdate: 'plan',

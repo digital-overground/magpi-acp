@@ -27,12 +27,14 @@ import { getAuthMethods } from './auth.js'
 import { SessionManager, toToolCallLocations, type MagPiAcpSession } from './session.js'
 import { PiRpcProcess, type PiSessionEntry, type PiSessionTreeNode } from '../pi-rpc/process.js'
 import {
+  MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY,
   MAGPI_ACP_FORK_ENTRY_ID_META,
   MAGPI_ACP_FORK_MESSAGES_METHOD,
   MAGPI_ACP_FORK_PICKER_CAPABILITY,
   MAGPI_ACP_NAVIGATE_TREE_METHOD,
   MAGPI_ACP_TREE_METHOD,
-  MAGPI_ACP_TREE_PICKER_CAPABILITY
+  MAGPI_ACP_TREE_PICKER_CAPABILITY,
+  type TreeNavigationOptions
 } from '../pi-rpc/tree-command.js'
 import { listPiSessions, findPiSession } from './pi-sessions.js'
 import { activeSessionMessages } from './pi-session-tree.js'
@@ -264,7 +266,8 @@ export class MagPiAcpAgent implements ACPAgent {
         },
         _meta: {
           [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,
-          [MAGPI_ACP_TREE_PICKER_CAPABILITY]: true
+          [MAGPI_ACP_TREE_PICKER_CAPABILITY]: true,
+          [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true
         }
       }
     }
@@ -940,6 +943,18 @@ export class MagPiAcpAgent implements ACPAgent {
     const sessionId = typeof params.sessionId === 'string' ? params.sessionId : null
     if (!sessionId) throw RequestError.invalidParams('sessionId is required.')
 
+    let navigationOptions: TreeNavigationOptions | null = null
+    if (method === MAGPI_ACP_NAVIGATE_TREE_METHOD) {
+      const { summarize, customInstructions } = params
+      if (summarize !== undefined && typeof summarize !== 'boolean') {
+        throw RequestError.invalidParams('summarize must be a boolean.')
+      }
+      if (customInstructions !== undefined && typeof customInstructions !== 'string') {
+        throw RequestError.invalidParams('customInstructions must be a string.')
+      }
+      navigationOptions = { summarize: summarize ?? false, customInstructions }
+    }
+
     const session = await this.restoreSession(sessionId)
     if (method === MAGPI_ACP_FORK_MESSAGES_METHOD) {
       return { messages: await session.proc.getForkMessages() }
@@ -949,7 +964,7 @@ export class MagPiAcpAgent implements ACPAgent {
       return await session.proc.getTree()
     }
 
-    if (method === MAGPI_ACP_NAVIGATE_TREE_METHOD) {
+    if (navigationOptions) {
       const entryId = typeof params.entryId === 'string' && params.entryId.trim() ? params.entryId : null
       if (!entryId) throw RequestError.invalidParams('entryId is required.')
 
@@ -958,7 +973,7 @@ export class MagPiAcpAgent implements ACPAgent {
       if (!entry) throw RequestError.invalidParams(`Pi tree message not found: ${entryId}`)
 
       const identity = (await session.proc.getState()) as { sessionFile?: unknown; sessionId?: unknown }
-      await session.proc.navigateTree(entryId)
+      await session.proc.navigateTree(entryId, navigationOptions)
       const [after, nextState] = await Promise.all([session.proc.getTree(), session.proc.getState()])
       const nextIdentity = nextState as { sessionFile?: unknown; sessionId?: unknown }
       if (nextIdentity.sessionFile !== identity.sessionFile || nextIdentity.sessionId !== identity.sessionId) {
@@ -1050,6 +1065,21 @@ export class MagPiAcpAgent implements ACPAgent {
 
     for (const m of messages) {
       const role = String(m?.role ?? '')
+
+      if (role === 'branchSummary') {
+        const text = normalizePiMessageText(m?.content)
+        if (text) {
+          await this.conn.sessionUpdate({
+            sessionId: session.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text }
+            },
+            _meta: { [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true }
+          })
+        }
+        continue
+      }
 
       if (role === 'user') {
         const text = normalizePiMessageText(m?.content)

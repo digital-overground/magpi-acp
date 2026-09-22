@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import * as readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import { getPiCommand, shouldUseShellForPiCommand } from './command.js'
-import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from './tree-command.js'
+import { MAGPI_ACP_NAVIGATE_TREE_COMMAND, type TreeNavigationOptions } from './tree-command.js'
 
 export class PiRpcSpawnError extends Error {
   /** Underlying spawn error code, e.g. ENOENT, EACCES */
@@ -304,26 +304,23 @@ export class PiRpcProcess {
     return res.data as { tree: PiSessionTreeNode[]; leafId: string | null }
   }
 
-  async navigateTree(entryId: string): Promise<void> {
-    let unsubscribe = () => {}
-    const settled = new Promise<void>((resolve, reject) => {
-      let failure: Error | undefined
-      unsubscribe = this.onEvent(event => {
-        if (event.type === 'extension_error') {
-          failure = new Error(String(event.error ?? 'Pi tree navigation extension failed.'))
-        }
-        if (event.type !== 'agent_settled') return
-        unsubscribe()
-        if (failure) reject(failure)
-        else resolve()
-      })
+  async navigateTree(entryId: string, options: TreeNavigationOptions = { summarize: false }): Promise<void> {
+    let failure: Error | undefined
+    const unsubscribe = this.onEvent(event => {
+      if (event.type === 'extension_error') {
+        failure = new Error(String(event.error ?? 'Pi tree navigation extension failed.'))
+      }
     })
     try {
-      await this.prompt(`/${MAGPI_ACP_NAVIGATE_TREE_COMMAND} ${entryId}`)
-      await settled
-    } catch (error) {
+      const payload = JSON.stringify({
+        entryId,
+        summarize: options.summarize,
+        customInstructions: options.customInstructions
+      })
+      await this.prompt(`/${MAGPI_ACP_NAVIGATE_TREE_COMMAND} ${payload}`)
+      if (failure) throw failure
+    } finally {
       unsubscribe()
-      throw error
     }
   }
 
