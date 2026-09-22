@@ -152,3 +152,89 @@ test('MagPiAcpAgent: listSessions lists pi sessions and loadSession replays hist
     else process.env.PI_CODING_AGENT_DIR = oldEnv
   }
 })
+
+test('MagPiAcpAgent: reloading after tree navigation preserves the live branch', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-tree-reload-'))
+  const sessionsDir = join(root, 'sessions', '--tmp--project--')
+  mkdirSync(sessionsDir, { recursive: true })
+  writeFileSync(
+    join(sessionsDir, '0000_sess-tree.jsonl'),
+    [
+      { type: 'session', version: 3, id: 'sess-tree', timestamp: '2026-02-11T00:00:00.000Z', cwd: '/tmp/project' },
+      {
+        type: 'message',
+        id: 'user-1',
+        parentId: null,
+        timestamp: '2026-02-11T00:00:01.000Z',
+        message: { role: 'user', content: 'First prompt' }
+      },
+      {
+        type: 'message',
+        id: 'assistant-1',
+        parentId: 'user-1',
+        timestamp: '2026-02-11T00:00:02.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'First answer' }] }
+      },
+      {
+        type: 'message',
+        id: 'user-2',
+        parentId: 'assistant-1',
+        timestamp: '2026-02-11T00:00:03.000Z',
+        message: { role: 'user', content: 'Second prompt' }
+      },
+      {
+        type: 'message',
+        id: 'assistant-2',
+        parentId: 'user-2',
+        timestamp: '2026-02-11T00:00:04.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Second answer' }] }
+      }
+    ]
+      .map(entry => JSON.stringify(entry))
+      .join('\n') + '\n'
+  )
+
+  const oldEnv = process.env.PI_CODING_AGENT_DIR
+  const originalSpawn = PiRpcProcess.spawn
+  process.env.PI_CODING_AGENT_DIR = root
+  let leafId = 'assistant-2'
+  let spawnCount = 0
+  let disposed = false
+  ;(PiRpcProcess as any).spawn = async () => {
+    spawnCount += 1
+    return {
+      dispose: () => {
+        disposed = true
+      },
+      getAvailableModels: async () => ({ models: [] }),
+      getCommands: async () => ({ commands: [] }),
+      getMessages: async () => ({ messages: [] }),
+      getState: async () => ({ thinkingLevel: 'medium' }),
+      getTree: async () => ({ leafId, tree: [] }),
+      onEvent: () => () => {}
+    } as any
+  }
+
+  try {
+    const conn = new FakeAgentSideConnection()
+    const agent = new MagPiAcpAgent(asAgentConn(conn))
+    const params = { sessionId: 'sess-tree', cwd: '/tmp/project', mcpServers: [] } as any
+    await agent.loadSession(params)
+
+    leafId = 'assistant-1'
+    conn.updates.length = 0
+    await agent.loadSession(params)
+
+    const replayed = conn.updates
+      .map(update => update.update)
+      .filter(update => update.sessionUpdate === 'user_message_chunk' || update.sessionUpdate === 'agent_message_chunk')
+      .map(update => (update as any).content?.text)
+    assert.deepEqual(replayed, ['First prompt', 'First answer'])
+    assert.equal(spawnCount, 1)
+    assert.equal(disposed, false)
+  } finally {
+    PiRpcProcess.spawn = originalSpawn
+    if (oldEnv === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = oldEnv
+  }
+})

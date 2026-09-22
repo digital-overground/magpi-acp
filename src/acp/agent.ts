@@ -1023,11 +1023,7 @@ export class MagPiAcpAgent implements ACPAgent {
       throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`)
     }
 
-    // If the client is re-loading a session that is already active, tear down the existing
-    // pi subprocess so we can start fresh and re-advertise commands reliably.
-    // (Some clients may call session/load when restoring from history.)
-    this.sessions.close(params.sessionId)
-
+    const liveSession = this.sessions.maybeGet(params.sessionId)
     const stored = findPiSession(params.sessionId)
     if (!stored) {
       throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`)
@@ -1045,7 +1041,12 @@ export class MagPiAcpAgent implements ACPAgent {
     ;(this.sessions as any).closeAllExcept?.(session.sessionId)
 
     // Replay the full active branch; Pi's RPC context omits messages removed by compaction.
-    const activeMessages = activeSessionMessages(stored.sessionFile)
+    // Keep the live Pi leaf because unsummarized tree navigation is not persisted until
+    // the next entry is appended.
+    const activeMessages = activeSessionMessages(
+      stored.sessionFile,
+      liveSession ? (await proc.getTree()).leafId : undefined
+    )
     const data = activeMessages.length ? undefined : ((await proc.getMessages()) as any)
     const messages = activeMessages.length
       ? activeMessages.map(entry => entry.message)

@@ -16,7 +16,7 @@ export type ActiveSessionMessage = {
   message: NonNullable<SessionEntry['message']>
 }
 
-export function activeSessionMessages(sessionFile: string): ActiveSessionMessage[] {
+export function activeSessionMessages(sessionFile: string, leafId?: string | null): ActiveSessionMessage[] {
   let contents: string
   try {
     contents = readFileSync(sessionFile, 'utf8')
@@ -45,7 +45,7 @@ export function activeSessionMessages(sessionFile: string): ActiveSessionMessage
 
   const path: typeof entries = []
   const visited = new Set<string>()
-  let current = entries.at(-1)
+  let current = leafId === undefined ? entries.at(-1) : leafId === null ? undefined : entriesById.get(leafId)
 
   while (current && !visited.has(current.id)) {
     visited.add(current.id)
