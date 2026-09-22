@@ -1,118 +1,132 @@
-import assert from 'node:assert/strict'
-import test from 'node:test'
-import registerMagPiAcpAskUser from '../../src/pi-extension/ask-user.js'
+import assert from "node:assert/strict";
+import test from "node:test";
 
-function loadAskUserTool(): any {
-  let sessionStart: (() => void) | undefined
-  let tool: unknown
+import registerMagPiAcpAskUser from "../../src/pi-extension/ask-user.js";
+import type { AskTool } from "../../src/pi-extension/ask-user.js";
+
+const noInput = async (): Promise<string> => {
+  await Promise.resolve();
+  return "";
+};
+
+const loadAskUserTool = (): AskTool => {
+  let sessionStart: (() => void) | undefined;
+  let tool: AskTool | undefined;
   registerMagPiAcpAskUser({
     getAllTools: () => [],
     on: (_event, handler) => {
-      sessionStart = handler
+      sessionStart = handler;
     },
-    registerTool: registered => {
-      tool = registered
-    }
-  })
-  assert.ok(sessionStart)
-  sessionStart()
-  return tool
-}
+    registerTool: (registered) => {
+      tool = registered;
+    },
+  });
+  assert.ok(sessionStart);
+  sessionStart();
+  assert.ok(tool);
+  return tool;
+};
 
-test('Pi ask_user extension returns the selected answer', async () => {
-  const tool = loadAskUserTool()
+void test("Pi ask_user extension returns the selected answer", async () => {
+  const tool = loadAskUserTool();
 
-  assert.equal(tool.name, 'ask_user')
-  assert.equal(tool.executionMode, 'sequential')
+  assert.equal(tool.name, "ask_user");
+  assert.equal(tool.executionMode, "sequential");
 
-  const prompts: unknown[] = []
+  const prompts: unknown[] = [];
   const result = await tool.execute(
-    'ask-1',
+    "ask-1",
     {
-      question: 'Which option?',
-      context: 'Choose the safer default.',
+      context: "Choose the safer default.",
       options: [
-        { title: 'Alpha', description: 'First option' },
-        { title: 'Beta', description: 'Second option' }
-      ]
+        { description: "First option", title: "Alpha" },
+        { description: "Second option", title: "Beta" },
+      ],
+      question: "Which option?",
     },
     undefined,
     undefined,
     {
       hasUI: true,
       ui: {
+        input: noInput,
         select: async (title: string, options: string[]) => {
-          prompts.push({ title, options })
-          return 'Beta'
+          await Promise.resolve();
+          prompts.push({ options, title });
+          return "Beta";
         },
-        input: async () => undefined
-      }
+      },
     }
-  )
+  );
 
   assert.deepEqual(prompts, [
     {
-      title: 'Which option?\n\nContext:\nChoose the safer default.',
-      options: ['Alpha', 'Beta', '✏️ Type custom response...']
-    }
-  ])
+      options: ["Alpha", "Beta", "✏️ Type custom response..."],
+      title: "Which option?\n\nContext:\nChoose the safer default.",
+    },
+  ]);
   assert.deepEqual(result, {
-    content: [{ type: 'text', text: 'User answered: Beta' }],
+    content: [{ text: "User answered: Beta", type: "text" }],
     details: {
-      question: 'Which option?',
-      context: 'Choose the safer default.',
+      cancelled: false,
+      context: "Choose the safer default.",
       options: [
-        { title: 'Alpha', description: 'First option' },
-        { title: 'Beta', description: 'Second option' }
+        { description: "First option", title: "Alpha" },
+        { description: "Second option", title: "Beta" },
       ],
-      response: { kind: 'selection', selections: ['Beta'] },
-      cancelled: false
-    }
-  })
-})
+      question: "Which option?",
+      response: { kind: "selection", selections: ["Beta"] },
+    },
+  });
+});
 
-test('Pi ask_user extension does not conflict with an installed ask_user tool', async () => {
-  const registered: unknown[] = []
-  let sessionStart: (() => void) | undefined
+void test("Pi ask_user extension does not conflict with an installed ask_user tool", () => {
+  const registered: unknown[] = [];
+  let sessionStart: (() => void) | undefined;
 
   registerMagPiAcpAskUser({
-    getAllTools: () => [{ name: 'ask_user' }],
+    getAllTools: () => [{ name: "ask_user" }],
     on: (_event, handler) => {
-      sessionStart = handler
+      sessionStart = handler;
     },
-    registerTool: tool => registered.push(tool)
-  })
+    registerTool: (tool) => {
+      registered.push(tool);
+    },
+  });
 
-  assert.deepEqual(registered, [])
-  assert.ok(sessionStart)
-  sessionStart()
-  assert.deepEqual(registered, [])
-})
+  assert.deepEqual(registered, []);
+  assert.ok(sessionStart);
+  sessionStart();
+  assert.deepEqual(registered, []);
+});
 
-test('Pi ask_user extension treats an empty response as cancellation', async () => {
-  const tool = loadAskUserTool()
+void test("Pi ask_user extension treats an empty response as cancellation", async () => {
+  const tool = loadAskUserTool();
 
   const result = await tool.execute(
-    'ask-2',
-    { question: 'Continue?', options: [{ title: 'Yes' }] },
+    "ask-2",
+    { options: [{ title: "Yes" }], question: "Continue?" },
     undefined,
     undefined,
     {
       hasUI: true,
       ui: {
-        select: async () => '   ',
-        input: async () => undefined
-      }
+        input: noInput,
+        select: async () => {
+          await Promise.resolve();
+          return "   ";
+        },
+      },
     }
-  )
+  );
 
   assert.deepEqual(result, {
-    content: [{ type: 'text', text: 'User cancelled the question' }],
+    content: [{ text: "User cancelled the question", type: "text" }],
     details: {
-      question: 'Continue?',
-      options: [{ title: 'Yes' }],
+      cancelled: true,
+      options: [{ title: "Yes" }],
+      question: "Continue?",
       response: null,
-      cancelled: true
-    }
-  })
-})
+    },
+  });
+});

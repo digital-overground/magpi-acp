@@ -1,8 +1,6 @@
 # MagPi ACP codebase review
 
-> **Scope:** the current `dev` worktree at `3969a6f`, including the pre-existing uncommitted changes.
-> **Lenses:** Ponytail whole-repository complexity review and Matt Pocock's deep-module design vocabulary.
-> **Out of scope:** this is not a dedicated correctness, security, or performance-defect review.
+> **Scope:** the current `dev` worktree at `3969a6f`, including the pre-existing uncommitted changes. **Lenses:** Ponytail whole-repository complexity review and Matt Pocock's deep-module design vocabulary. **Out of scope:** this is not a dedicated correctness, security, or performance-defect review.
 
 ## Executive summary
 
@@ -19,20 +17,20 @@ A conservative immediate cleanup can remove roughly **1,100 lines with no depend
 
 ## Evidence snapshot
 
-| Signal                                           |                                    Current result |
-| ------------------------------------------------ | ------------------------------------------------: |
-| Production TypeScript                            |                                      ~4,520 lines |
-| Tests                                            |                                      ~4,098 lines |
-| Standalone scripts                               |                                         710 lines |
-| Tests                                            |                                       117 passing |
-| Experimental test coverage                       | 89.75% lines / 70.08% branches / 81.92% functions |
-| Source `as any` casts                            |                                                80 |
-| Test `as any` casts                              |                               269 across 21 files |
-| Direct `session.proc` calls in `agent.ts`        |                                                26 |
-| Direct `sessionUpdate` calls in `agent.ts`       |                                                38 |
-| Repeated `MagPiAcpSession` construction in tests |                      36, including 33 in one file |
-| Unreferenced secondary smoke scripts             |                               9 files / 602 lines |
-| Runtime dependencies removable                   |                                                 0 |
+| Signal | Current result |
+| --- | --: |
+| Production TypeScript | ~4,520 lines |
+| Tests | ~4,098 lines |
+| Standalone scripts | 710 lines |
+| Tests | 117 passing |
+| Experimental test coverage | 89.75% lines / 70.08% branches / 81.92% functions |
+| Source `as any` casts | 80 |
+| Test `as any` casts | 269 across 21 files |
+| Direct `session.proc` calls in `agent.ts` | 26 |
+| Direct `sessionUpdate` calls in `agent.ts` | 38 |
+| Repeated `MagPiAcpSession` construction in tests | 36, including 33 in one file |
+| Unreferenced secondary smoke scripts | 9 files / 602 lines |
+| Runtime dependencies removable | 0 |
 
 Complexity probes identified four orchestration hotspots:
 
@@ -76,16 +74,16 @@ The sibling Mischief consumer confirms that the current private contract is narr
 
 ## Deep-module scorecard
 
-| Module                                            | Assessment                                         | Why                                                                                                                                                                                                |
-| ------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PiRpcProcess`                                    | **Deep, but leaky**                                | It correctly hides process creation, NDJSON correlation, draining, and exit behavior. Returning `unknown` for core responses pushes Pi schema knowledge back into callers.                         |
-| `MagPiAcpSession`                                 | **Deep**                                           | `prompt()`, `cancel()`, and event wiring hide queueing, tool state, diff snapshots, elicitation, usage, and ordered emission. The public `proc` escape hatch weakens the interface.                |
-| `SessionManager`                                  | **Medium depth**                                   | It earns its existence through process lifecycle and native fork/clone behavior, but its map-oriented interface exposes lifecycle decisions to `MagPiAcpAgent`.                                    |
-| `pi-sessions.ts`                                  | **Deep**                                           | A small discovery interface hides Pi's filesystem layout and bounded reads. Internal metadata parsing repeats work and knowledge.                                                                  |
-| `translate/prompt.ts` and `translate/pi-tools.ts` | **Deep enough**                                    | Small pure interfaces hide irregular external payloads and are easy to test.                                                                                                                       |
-| `translate/bash.ts`                               | **Shallow**                                        | Eight exported helpers make both live and replay callers understand the assembly order and ACP terminal metadata details.                                                                          |
-| `pi-extension/tree.ts`                            | **Appropriately deep and minimal**                 | One narrow adapter exists only because Pi RPC lacks native tree navigation. It should remain small and be deleted when Pi exposes the operation.                                                   |
-| `MagPiAcpAgent`                                   | **Deep external interface, low internal locality** | ACP callers see a useful interface, but command execution, startup policy, replay, configuration, title generation, version checking, and lifecycle restoration all change in one 1,700-line file. |
+| Module | Assessment | Why |
+| --- | --- | --- |
+| `PiRpcProcess` | **Deep, but leaky** | It correctly hides process creation, NDJSON correlation, draining, and exit behavior. Returning `unknown` for core responses pushes Pi schema knowledge back into callers. |
+| `MagPiAcpSession` | **Deep** | `prompt()`, `cancel()`, and event wiring hide queueing, tool state, diff snapshots, elicitation, usage, and ordered emission. The public `proc` escape hatch weakens the interface. |
+| `SessionManager` | **Medium depth** | It earns its existence through process lifecycle and native fork/clone behavior, but its map-oriented interface exposes lifecycle decisions to `MagPiAcpAgent`. |
+| `pi-sessions.ts` | **Deep** | A small discovery interface hides Pi's filesystem layout and bounded reads. Internal metadata parsing repeats work and knowledge. |
+| `translate/prompt.ts` and `translate/pi-tools.ts` | **Deep enough** | Small pure interfaces hide irregular external payloads and are easy to test. |
+| `translate/bash.ts` | **Shallow** | Eight exported helpers make both live and replay callers understand the assembly order and ACP terminal metadata details. |
+| `pi-extension/tree.ts` | **Appropriately deep and minimal** | One narrow adapter exists only because Pi RPC lacks native tree navigation. It should remain small and be deleted when Pi exposes the operation. |
+| `MagPiAcpAgent` | **Deep external interface, low internal locality** | ACP callers see a useful interface, but command execution, startup policy, replay, configuration, title generation, version checking, and lifecycle restoration all change in one 1,700-line file. |
 
 ## Prioritized architecture findings
 
@@ -184,21 +182,21 @@ This is an AI-navigability problem: the repository's strongest instruction file 
 
 ## Ponytail audit: ranked cuts
 
-| Rank | Finding                                                                                                                                                                                                                                                                                                              |
-| ---: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-|    1 | `scripts/smoke-{acp-load,changelog,compact,export,modes,newsession-intro,queue,session,startupinfo}.mjs`: **delete:** 602 lines of unreferenced, mostly duplicated harnesses; `npm run smoke`, CI, and release tooling invoke none of them. Keep one wire smoke and move any unique assertion into an existing test. |
-|    2 | `docs/pi-native-forking-plan.md`: **delete:** 413-line superseded proposal describing client-message markers and rewind behavior removed by the newer native picker architecture. Git history is the archive.                                                                                                        |
-|    3 | `test/component/session-events.test.ts` and `test/helpers/fakes.ts`: **shrink:** 33 copies of session construction plus 32 event-loop drains. One `createTestSession()` fixture preserves coverage with roughly 150-200 fewer lines.                                                                                 |
-|    4 | Seven test-local `FakeSessions` classes: **shrink:** repeated private-field fakes. One typed manager adapter after A1 replaces them.                                                                                                                                                                                 |
-|    5 | `src/acp/agent.ts:443-856,1195-1213`: **shrink:** repeated `sessionUpdate` envelopes and duplicated command advertisement. Two local helpers remove roughly 80-100 lines without a framework.                                                                                                                        |
-|    6 | `test/unit/merge-commands.test.ts` and `test/unit/stdout-destroyed-does-not-crash.test.ts`: **delete:** both test copied local implementations instead of production code. Delete the 51 lines or test an extracted production function; copied tests provide no regression protection.                              |
-|    7 | `src/pi-rpc/process.ts:20-31,113,124-130,263-266`: **delete:** prelude capture and ANSI stripping have no caller. Nothing replaces them; if capture returns later, Node's `stripVTControlCharacters()` replaces the custom regex.                                                                                    |
-|    8 | `src/acp/session.ts:325-329,380,562,584,902,921`; `src/pi-rpc/process.ts:389-392`; `src/acp/pi-sessions.ts:389-391`: **delete:** unused `SessionManager.get()`, write-only `inAgentLoop`, `switchSession()`, and `findPiSessionFile()`. Nothing replaces them.                                                       |
-|    9 | `src/acp/agent.ts:541-634`: **shrink:** steering and follow-up handlers are the same delivery-mode operation with different state keys/setters. One private handler removes roughly 30-40 lines.                                                                                                                     |
-|   10 | `src/acp/pi-sessions.ts:116-269,305-351`: **shrink:** three tail parses and two fallback scans. One metadata pass replaces them.                                                                                                                                                                                     |
-|   11 | `src/acp/translate/pi-messages.ts:10-17`: **shrink:** `normalizePiAssistantText()` is a restricted duplicate of `normalizePiMessageText()`. Use the general normalizer and delete the second function.                                                                                                               |
-|   12 | `src/acp/session.ts:32,315,342,356,397,404`: **yagni:** `mcpServers` is threaded into a property that is never read. Reject unsupported non-empty input or remove the storage until forwarding exists.                                                                                                               |
-|   13 | `.vscode/settings.json`: **delete:** repository-wide editor colors have no product, build, or protocol role. Keep only if this is intentional project branding.                                                                                                                                                      |
+| Rank | Finding |
+| --: | --- |
+| 1 | `scripts/smoke-{acp-load,changelog,compact,export,modes,newsession-intro,queue,session,startupinfo}.mjs`: **delete:** 602 lines of unreferenced, mostly duplicated harnesses; `npm run smoke`, CI, and release tooling invoke none of them. Keep one wire smoke and move any unique assertion into an existing test. |
+| 2 | `docs/pi-native-forking-plan.md`: **delete:** 413-line superseded proposal describing client-message markers and rewind behavior removed by the newer native picker architecture. Git history is the archive. |
+| 3 | `test/component/session-events.test.ts` and `test/helpers/fakes.ts`: **shrink:** 33 copies of session construction plus 32 event-loop drains. One `createTestSession()` fixture preserves coverage with roughly 150-200 fewer lines. |
+| 4 | Seven test-local `FakeSessions` classes: **shrink:** repeated private-field fakes. One typed manager adapter after A1 replaces them. |
+| 5 | `src/acp/agent.ts:443-856,1195-1213`: **shrink:** repeated `sessionUpdate` envelopes and duplicated command advertisement. Two local helpers remove roughly 80-100 lines without a framework. |
+| 6 | `test/unit/merge-commands.test.ts` and `test/unit/stdout-destroyed-does-not-crash.test.ts`: **delete:** both test copied local implementations instead of production code. Delete the 51 lines or test an extracted production function; copied tests provide no regression protection. |
+| 7 | `src/pi-rpc/process.ts:20-31,113,124-130,263-266`: **delete:** prelude capture and ANSI stripping have no caller. Nothing replaces them; if capture returns later, Node's `stripVTControlCharacters()` replaces the custom regex. |
+| 8 | `src/acp/session.ts:325-329,380,562,584,902,921`; `src/pi-rpc/process.ts:389-392`; `src/acp/pi-sessions.ts:389-391`: **delete:** unused `SessionManager.get()`, write-only `inAgentLoop`, `switchSession()`, and `findPiSessionFile()`. Nothing replaces them. |
+| 9 | `src/acp/agent.ts:541-634`: **shrink:** steering and follow-up handlers are the same delivery-mode operation with different state keys/setters. One private handler removes roughly 30-40 lines. |
+| 10 | `src/acp/pi-sessions.ts:116-269,305-351`: **shrink:** three tail parses and two fallback scans. One metadata pass replaces them. |
+| 11 | `src/acp/translate/pi-messages.ts:10-17`: **shrink:** `normalizePiAssistantText()` is a restricted duplicate of `normalizePiMessageText()`. Use the general normalizer and delete the second function. |
+| 12 | `src/acp/session.ts:32,315,342,356,397,404`: **yagni:** `mcpServers` is threaded into a property that is never read. Reject unsupported non-empty input or remove the storage until forwarding exists. |
+| 13 | `.vscode/settings.json`: **delete:** repository-wide editor colors have no product, build, or protocol role. Keep only if this is intentional project branding. |
 
 ### Product-decision cuts
 
@@ -286,13 +284,13 @@ Re-measure after each phase. Do not plan another layer until a concrete caller s
 
 ## Validation performed
 
-| Command/probe                                            | Result                                                                                    |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `npm run check`                                          | Passed: lint, typecheck, 117 tests, and build                                             |
-| `npm run smoke`                                          | Passed: metadata-free new → prompt → fork → load flow                                     |
-| Experimental Node test coverage                          | Passed; 89.75% line coverage overall, excluding the unimported entrypoint                 |
-| `npx tsc --noEmit --noUnusedLocals --noUnusedParameters` | Found one issue: write-only `MagPiAcpSession.inAgentLoop`                                 |
-| Temporary ESLint complexity probe                        | Identified the four orchestration hotspots listed above; not a configured project failure |
+| Command/probe | Result |
+| --- | --- |
+| `npm run check` | Passed: lint, typecheck, 117 tests, and build |
+| `npm run smoke` | Passed: metadata-free new → prompt → fork → load flow |
+| Experimental Node test coverage | Passed; 89.75% line coverage overall, excluding the unimported entrypoint |
+| `npx tsc --noEmit --noUnusedLocals --noUnusedParameters` | Found one issue: write-only `MagPiAcpSession.inAgentLoop` |
+| Temporary ESLint complexity probe | Identified the four orchestration hotspots listed above; not a configured project failure |
 
 The test runner emits Node's `DEP0205` warning for `module.register()` through the `tsx` loader; this is dependency/tooling noise, not a MagPi architecture finding.
 

@@ -1,31 +1,38 @@
-import {
-  RequestError,
-  type Agent as ACPAgent,
-  type AgentSideConnection,
-  type AuthenticateRequest,
-  type CancelNotification,
-  type ForkSessionRequest,
-  type ForkSessionResponse,
-  type InitializeRequest,
-  type InitializeResponse,
-  type ListSessionsRequest,
-  type ListSessionsResponse,
-  type LoadSessionRequest,
-  type LoadSessionResponse,
-  type NewSessionRequest,
-  type PromptRequest,
-  type PromptResponse,
-  type SessionConfigOption,
-  type SessionInfo,
-  type SetSessionConfigOptionRequest,
-  type SetSessionConfigOptionResponse,
-  type SetSessionModeRequest,
-  type SetSessionModeResponse,
-  type StopReason
-} from '@agentclientprotocol/sdk'
-import { getAuthMethods } from './auth.js'
-import { SessionManager, toToolCallLocations, type MagPiAcpSession } from './session.js'
-import { PiRpcProcess, type PiSessionEntry, type PiSessionTreeNode } from '../pi-rpc/process.js'
+import { execFile, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { RequestError } from "@agentclientprotocol/sdk";
+import type {
+  Agent as ACPAgent,
+  AuthenticateRequest,
+  CancelNotification,
+  ForkSessionRequest,
+  ForkSessionResponse,
+  InitializeRequest,
+  InitializeResponse,
+  ListSessionsRequest,
+  ListSessionsResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
+  NewSessionRequest,
+  PromptRequest,
+  PromptResponse,
+  SessionConfigOption,
+  SessionInfo,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
+  SetSessionModeRequest,
+  SetSessionModeResponse,
+  StopReason,
+  AvailableCommand,
+} from "@agentclientprotocol/sdk";
+
+import { getPiCommand, shouldUseShellForPiCommand } from "../pi-rpc/command.js";
+import { PiRpcProcess } from "../pi-rpc/process.js";
+import type { PiSessionEntry, PiSessionTreeNode } from "../pi-rpc/process.js";
 import {
   MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY,
   MAGPI_ACP_FORK_ENTRY_ID_META,
@@ -34,12 +41,20 @@ import {
   MAGPI_ACP_NAVIGATE_TREE_METHOD,
   MAGPI_ACP_TREE_METHOD,
   MAGPI_ACP_TREE_PICKER_CAPABILITY,
-  type TreeNavigationOptions
-} from '../pi-rpc/tree-command.js'
-import { listPiSessions, findPiSession } from './pi-sessions.js'
-import { activeSessionMessages } from './pi-session-tree.js'
-import { normalizePiAssistantText, normalizePiMessageText } from './translate/pi-messages.js'
-import { todoResultToPlanEntries, toolResultToText } from './translate/pi-tools.js'
+} from "../pi-rpc/tree-command.js";
+import type { TreeNavigationOptions } from "../pi-rpc/tree-command.js";
+import { asRecord, errorMessage, stringValue } from "../unknown.js";
+import { maybeAuthRequiredError } from "./auth-required.js";
+import { getAuthMethods } from "./auth.js";
+import type { AgentClientConnection } from "./connection.js";
+import { toAvailableCommandsFromPiGetCommands } from "./pi-commands.js";
+import { activeSessionMessages } from "./pi-session-tree.js";
+import { listPiSessions, findPiSession } from "./pi-sessions.js";
+import { getQuietStartup, getRoles } from "./pi-settings.js";
+import type { PiRole } from "./pi-settings.js";
+import { SessionManager, toToolCallLocations } from "./session.js";
+import type { MagPiAcpSession } from "./session.js";
+import { parseCommandArgs } from "./slash-commands.js";
 import {
   bashCommand,
   bashExitCode,
@@ -48,133 +63,1314 @@ import {
   bashTerminalExitMeta,
   bashTerminalInfoMeta,
   bashTerminalOutputMeta,
-  isBashTool
-} from './translate/bash.js'
-import { promptToPiMessage } from './translate/prompt.js'
-import { parseCommandArgs } from './slash-commands.js'
-import { getQuietStartup, getRoles, type PiRole } from './pi-settings.js'
-import { toAvailableCommandsFromPiGetCommands } from './pi-commands.js'
-import { maybeAuthRequiredError } from './auth-required.js'
-import { isAbsolute } from 'node:path'
-import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs'
-import type { AvailableCommand } from '@agentclientprotocol/sdk'
-import { join, dirname } from 'node:path'
-import { execFile, spawnSync } from 'node:child_process'
-import { getPiCommand, shouldUseShellForPiCommand } from '../pi-rpc/command.js'
+  isBashTool,
+} from "./translate/bash.js";
+import {
+  normalizePiAssistantText,
+  normalizePiMessageText,
+} from "./translate/pi-messages.js";
+import {
+  todoResultToPlanEntries,
+  toolResultToText,
+} from "./translate/pi-tools.js";
+import { promptToPiMessage } from "./translate/prompt.js";
 
-type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-type AdvertisedModel = {
-  modelId: string
-  name: string
-  description?: string | null
+type ThinkingLevel =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
+interface AdvertisedModel {
+  description?: string | null;
+  modelId: string;
+  name: string;
 }
 
-const MODEL_CONFIG_ID = 'model'
-const ROLE_CONFIG_ID = 'role'
-const THOUGHT_LEVEL_CONFIG_ID = 'thought_level'
+interface SessionConfiguration {
+  configOptions: SessionConfigOption[];
+  models: {
+    availableModels: AdvertisedModel[];
+    currentModelId: string;
+  } | null;
+  modes: {
+    availableModes: {
+      description?: string | null;
+      id: string;
+      name: string;
+    }[];
+    currentModeId: string;
+  };
+}
 
-function findTreeMessage(tree: PiSessionTreeNode[], entryId: string): PiSessionEntry | null {
+type UnknownRecord = Record<string, unknown>;
+interface PrefetchedConfiguration {
+  availableModels?: unknown;
+  state?: unknown;
+}
+
+const MODEL_CONFIG_ID = "model";
+const ROLE_CONFIG_ID = "role";
+const THOUGHT_LEVEL_CONFIG_ID = "thought_level";
+const THINKING_LEVELS: ThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+const isThinkingLevel = (value: string): value is ThinkingLevel =>
+  THINKING_LEVELS.some((level) => level === value);
+
+const findTreeMessage = (
+  tree: PiSessionTreeNode[],
+  entryId: string
+): PiSessionEntry | null => {
   for (const node of tree) {
-    const role = node.entry.message?.role
-    if (node.entry.id === entryId && node.entry.type === 'message' && (role === 'user' || role === 'assistant')) {
-      return node.entry
+    const messageRole = node.entry.message?.role;
+    if (
+      node.entry.id === entryId &&
+      node.entry.type === "message" &&
+      (messageRole === "user" || messageRole === "assistant")
+    ) {
+      return node.entry;
     }
-    const child = findTreeMessage(node.children, entryId)
-    if (child) return child
-  }
-  return null
-}
-
-function builtinAvailableCommands(): AvailableCommand[] {
-  return [
-    {
-      name: 'compact',
-      description: 'Manually compact the session context',
-      input: { hint: 'optional custom instructions' }
-    },
-    {
-      name: 'autocompact',
-      description: 'Toggle automatic context compaction',
-      input: { hint: 'on|off|toggle' }
-    },
-    {
-      name: 'export',
-      description: 'Export session to an HTML file in the session cwd'
-    },
-    {
-      name: 'session',
-      description: 'Show session stats (messages, tokens, cost, session file)'
-    },
-    {
-      name: 'name',
-      description: 'Set session display name',
-      input: { hint: '<name>' }
-    },
-    {
-      name: 'steering',
-      description: 'Get/set pi steering message delivery mode (how queued steering messages are delivered)',
-      input: { hint: '(no args to show) all | one-at-a-time' }
-    },
-    {
-      name: 'follow-up',
-      description: 'Get/set pi follow-up message delivery mode (how queued follow-up messages are delivered)',
-      input: { hint: '(no args to show) all | one-at-a-time' }
-    },
-    {
-      name: 'changelog',
-      description: 'Show pi changelog'
+    const child = findTreeMessage(node.children, entryId);
+    if (child !== null) {
+      return child;
     }
-  ]
-}
+  }
+  return null;
+};
 
-function mergeCommands(a: AvailableCommand[], b: AvailableCommand[]): AvailableCommand[] {
-  // Preserve order, de-dupe by name (first wins).
-  const out: AvailableCommand[] = []
-  const seen = new Set<string>()
+const builtinAvailableCommands = (): AvailableCommand[] => [
+  {
+    description: "Manually compact the session context",
+    input: { hint: "optional custom instructions" },
+    name: "compact",
+  },
+  {
+    description: "Toggle automatic context compaction",
+    input: { hint: "on|off|toggle" },
+    name: "autocompact",
+  },
+  {
+    description: "Export session to an HTML file in the session cwd",
+    name: "export",
+  },
+  {
+    description: "Show session stats (messages, tokens, cost, session file)",
+    name: "session",
+  },
+  {
+    description: "Set session display name",
+    input: { hint: "<name>" },
+    name: "name",
+  },
+  {
+    description:
+      "Get/set pi steering message delivery mode (how queued steering messages are delivered)",
+    input: { hint: "(no args to show) all | one-at-a-time" },
+    name: "steering",
+  },
+  {
+    description:
+      "Get/set pi follow-up message delivery mode (how queued follow-up messages are delivered)",
+    input: { hint: "(no args to show) all | one-at-a-time" },
+    name: "follow-up",
+  },
+  { description: "Show pi changelog", name: "changelog" },
+];
 
-  for (const c of [...a, ...b]) {
-    if (seen.has(c.name)) continue
-    seen.add(c.name)
-    out.push(c)
+const mergeCommands = (
+  first: AvailableCommand[],
+  second: AvailableCommand[]
+): AvailableCommand[] => {
+  const commands: AvailableCommand[] = [];
+  const seen = new Set<string>();
+  for (const command of [...first, ...second]) {
+    if (!seen.has(command.name)) {
+      seen.add(command.name);
+      commands.push(command);
+    }
+  }
+  return commands;
+};
+
+const readNearestPackageJson = (
+  metaUrl: string
+): { name?: string; version?: string } => {
+  try {
+    let directory = path.dirname(fileURLToPath(metaUrl));
+    for (let depth = 0; depth < 6; depth += 1) {
+      const packagePath = path.join(directory, "package.json");
+      if (existsSync(packagePath)) {
+        const json = asRecord(JSON.parse(readFileSync(packagePath, "utf-8")));
+        return {
+          name: typeof json?.name === "string" ? json.name : undefined,
+          version: typeof json?.version === "string" ? json.version : undefined,
+        };
+      }
+      directory = path.dirname(directory);
+    }
+  } catch {
+    // Use fallback package information.
+  }
+  return { name: "magpi-acp", version: "0.0.0" };
+};
+
+const pkg = readNearestPackageJson(import.meta.url);
+
+const buildConfigOptions = (state: {
+  models: SessionConfiguration["models"];
+  modes: SessionConfiguration["modes"];
+  roles: PiRole[];
+}): SessionConfigOption[] => {
+  const configOptions: SessionConfigOption[] = [
+    {
+      category: "thought_level",
+      currentValue: state.modes.currentModeId,
+      description: "Set the reasoning effort for this session",
+      id: THOUGHT_LEVEL_CONFIG_ID,
+      name: "Thinking",
+      options: state.modes.availableModes.map((mode) => ({
+        description: mode.description ?? null,
+        name: mode.name,
+        value: mode.id,
+      })),
+      type: "select",
+    },
+  ];
+
+  const { models } = state;
+  if (models !== null && models.availableModels.length > 0) {
+    configOptions.unshift({
+      category: "model",
+      currentValue: models.currentModelId,
+      description: "Select the model for this session",
+      id: MODEL_CONFIG_ID,
+      name: "Model",
+      options: models.availableModels.map((model) => ({
+        description: model.description ?? null,
+        name: model.name,
+        value: model.modelId,
+      })),
+      type: "select",
+    });
   }
 
-  return out
-}
-import { fileURLToPath } from 'node:url'
+  if (state.roles.length > 0) {
+    const currentRole = state.roles.find(
+      (candidate) =>
+        candidate.model === state.models?.currentModelId &&
+        candidate.thinkingLevel === state.modes.currentModeId
+    );
+    configOptions.unshift({
+      category: "mode",
+      currentValue: currentRole?.id ?? "",
+      description: "Switch model and thinking level together",
+      id: ROLE_CONFIG_ID,
+      name: "Role",
+      options: state.roles.map((role) => ({
+        description: `${role.model} · Thinking: ${role.thinkingLevel}`,
+        name: role.id,
+        value: role.id,
+      })),
+      type: "select",
+    });
+  }
 
-const pkg = readNearestPackageJson(import.meta.url)
+  return configOptions;
+};
+
+const getThinkingState = async (
+  proc: PiRpcProcess,
+  pre?: Pick<PrefetchedConfiguration, "state">
+): Promise<SessionConfiguration["modes"]> => {
+  let current: ThinkingLevel = "medium";
+  let stateValue = pre?.state;
+  if (stateValue === undefined) {
+    try {
+      stateValue = await proc.getState();
+    } catch {
+      stateValue = null;
+    }
+  }
+  const thinkingLevel = asRecord(stateValue)?.thinkingLevel;
+  if (typeof thinkingLevel === "string" && isThinkingLevel(thinkingLevel)) {
+    current = thinkingLevel;
+  }
+  return {
+    availableModes: THINKING_LEVELS.map((id) => ({
+      description: null,
+      id,
+      name: `Thinking: ${id}`,
+    })),
+    currentModeId: current,
+  };
+};
+
+const parseAdvertisedModel = (value: unknown): AdvertisedModel | null => {
+  const model = asRecord(value);
+  const provider = stringValue(model?.provider).trim();
+  const id = stringValue(model?.id).trim();
+  if (provider.length === 0 || id.length === 0) {
+    return null;
+  }
+  const name = stringValue(model?.name, id);
+  return {
+    description: null,
+    modelId: `${provider}/${id}`,
+    name: `${provider}/${name}`,
+  };
+};
+
+const resolveRpcValue = async (
+  prefetched: unknown,
+  request: () => Promise<unknown>
+): Promise<unknown> => {
+  if (prefetched !== undefined) {
+    return prefetched;
+  }
+  try {
+    return await request();
+  } catch {
+    return null;
+  }
+};
+
+const getModelState = async (
+  proc: PiRpcProcess,
+  pre?: PrefetchedConfiguration
+): Promise<SessionConfiguration["models"]> => {
+  const availableValue = await resolveRpcValue(
+    pre?.availableModels,
+    async () => await proc.getAvailableModels()
+  );
+  const rawModels = asRecord(availableValue)?.models;
+  const availableModels = (Array.isArray(rawModels) ? rawModels : [])
+    .map(parseAdvertisedModel)
+    .filter((model): model is AdvertisedModel => model !== null);
+
+  const stateValue = await resolveRpcValue(
+    pre?.state,
+    async () => await proc.getState()
+  );
+  const model = asRecord(asRecord(stateValue)?.model);
+  const provider = stringValue(model?.provider).trim();
+  const id = stringValue(model?.id).trim();
+  let currentModelId =
+    provider.length > 0 && id.length > 0 ? `${provider}/${id}` : null;
+
+  if (availableModels.length === 0 && currentModelId === null) {
+    return null;
+  }
+  currentModelId ??= availableModels[0]?.modelId ?? "default";
+  return { availableModels, currentModelId };
+};
+
+const getSessionConfiguration = async (
+  proc: PiRpcProcess,
+  pre?: PrefetchedConfiguration
+): Promise<SessionConfiguration> => {
+  const [models, modes] = await Promise.all([
+    getModelState(proc, pre),
+    getThinkingState(proc, { state: pre?.state }),
+  ]);
+  return {
+    configOptions: buildConfigOptions({ models, modes, roles: getRoles() }),
+    models,
+    modes,
+  };
+};
+
+const emitConfigOptionsUpdate = async (
+  conn: AgentClientConnection,
+  sessionId: string,
+  proc: PiRpcProcess
+): Promise<SessionConfigOption[]> => {
+  const { configOptions } = await getSessionConfiguration(proc);
+  await conn.sessionUpdate({
+    sessionId,
+    update: { configOptions, sessionUpdate: "config_option_update" },
+  });
+  return configOptions;
+};
+
+const setSessionModel = async (
+  proc: PiRpcProcess,
+  requestedModelId: string
+): Promise<void> => {
+  let provider: string | null = null;
+  let modelId: string | null = requestedModelId;
+  if (requestedModelId.includes("/")) {
+    const [candidateProvider, ...rest] = requestedModelId.split("/");
+    provider = candidateProvider ?? null;
+    modelId = rest.join("/");
+  }
+
+  if (provider === null || provider.length === 0) {
+    const rawModels = asRecord(await proc.getAvailableModels())?.models;
+    const models = Array.isArray(rawModels) ? rawModels : [];
+    const found = models
+      .map(asRecord)
+      .find((model) => stringValue(model?.id) === modelId);
+    if (found !== undefined) {
+      provider = stringValue(found.provider);
+      modelId = stringValue(found.id);
+    }
+  }
+  if (
+    provider === null ||
+    provider.length === 0 ||
+    modelId === null ||
+    modelId.length === 0
+  ) {
+    throw RequestError.invalidParams(`Unknown modelId: ${requestedModelId}`);
+  }
+  await proc.setModel(provider, modelId);
+};
+
+const normalizeGeneratedTitle = (output: string): string | null => {
+  const line = output
+    .trim()
+    .split(/\r?\n/u)
+    .find((candidate) => candidate.length > 0)
+    ?.replace(/^#+\s*/u, "")
+    .replace(/^title:\s*/iu, "")
+    .replaceAll(/^["'`]+|["'`.,:;!?]+$/gu, "")
+    .trim();
+  if (line === undefined || line.length === 0) {
+    return null;
+  }
+
+  const title = line.split(/\s+/u).slice(0, 6).join(" ").slice(0, 200).trim();
+  return title.length === 0 ? null : title;
+};
+
+export const generateThreadTitle = async (params: {
+  cwd: string;
+  model: string;
+  user: string;
+}): Promise<string | null> => {
+  const prompt = [
+    "Create a concise 2-6 word title for this conversation.",
+    "Return only the title, without quotes or punctuation.",
+    "",
+    `User: ${params.user.slice(0, 4000)}`,
+  ].join("\n");
+  const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND);
+
+  try {
+    const child = execFile(
+      command,
+      [
+        "--print",
+        "--no-session",
+        "--no-tools",
+        "--no-extensions",
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-context-files",
+        "--no-themes",
+        "--model",
+        params.model,
+        "--thinking",
+        "off",
+        "--",
+        prompt,
+      ],
+      {
+        cwd: params.cwd,
+        shell: shouldUseShellForPiCommand(command),
+        timeout: 15_000,
+      }
+    );
+    child.stdin?.end();
+    if (child.stdout === null) {
+      return null;
+    }
+
+    const closed = once(child, "close");
+    let output = "";
+    for await (const chunk of child.stdout) {
+      output += String(chunk);
+      if (Buffer.byteLength(output) > 16_384) {
+        child.kill();
+        return null;
+      }
+    }
+    const closeResult: unknown = await closed;
+    const code: unknown = Array.isArray(closeResult) ? closeResult[0] : null;
+    return code === 0 ? normalizeGeneratedTitle(output) : null;
+  } catch {
+    return null;
+  }
+};
+
+const isSemver = (version: string): boolean =>
+  /^\d+\.\d+\.\d+(?:[-+].+)?$/u.test(version);
+
+const compareSemver = (first: string, second: string): number => {
+  const firstParts = first.split(/[.-]/u).slice(0, 3).map(Number);
+  const secondParts = second.split(/[.-]/u).slice(0, 3).map(Number);
+  for (let index = 0; index < 3; index += 1) {
+    const difference = (firstParts[index] ?? 0) - (secondParts[index] ?? 0);
+    if (difference !== 0) {
+      return difference > 0 ? 1 : -1;
+    }
+  }
+  return 0;
+};
+
+const installedPiVersion = (): string => {
+  const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND);
+  const result = spawnSync(command, ["--version"], {
+    encoding: "utf-8",
+    shell: shouldUseShellForPiCommand(command),
+  });
+  const stdout = (result.stdout ?? "").trim();
+  const stderr = (result.stderr ?? "").trim();
+  return (stdout.length > 0 ? stdout : stderr).replace(/^v/iu, "");
+};
+
+const buildUpdateNotice = (): string | null => {
+  try {
+    const installed = installedPiVersion();
+    if (installed.length === 0 || !isSemver(installed)) {
+      return null;
+    }
+    const latestResult = spawnSync(
+      "npm",
+      ["view", "@earendil-works/pi-coding-agent", "version"],
+      { encoding: "utf-8", timeout: 800 }
+    );
+    const latest = (latestResult.stdout ?? "").trim().replace(/^v/iu, "");
+    if (
+      latest.length === 0 ||
+      !isSemver(latest) ||
+      compareSemver(latest, installed) <= 0
+    ) {
+      return null;
+    }
+    return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @earendil-works/pi-coding-agent\``;
+  } catch {
+    return null;
+  }
+};
+
+const buildStartupInfo = (options: { updateNotice: string | null }): string => {
+  let piVersionText = "pi";
+  try {
+    const installed = installedPiVersion();
+    if (installed.length > 0) {
+      piVersionText = `pi v${installed}`;
+    }
+  } catch {
+    // The message still works when pi does not report a version.
+  }
+  const lines = [
+    `MagPi v${pkg.version ?? "0.0.0"}`,
+    piVersionText,
+    "collect shiny things",
+  ];
+  if (options.updateNotice !== null && options.updateNotice.length > 0) {
+    lines.push("", "---", options.updateNotice);
+  }
+  return `${lines.join("\n").trim()}\n`;
+};
+
+const findChangelog = (): string | null => {
+  try {
+    const whichCommand = process.platform === "win32" ? "where" : "which";
+    const result = spawnSync(whichCommand, ["pi"], { encoding: "utf-8" });
+    const piPath = (result.stdout ?? "").split(/\r?\n/u)[0]?.trim();
+    if (piPath !== undefined && piPath.length > 0) {
+      const packageRoot = path.dirname(path.dirname(realpathSync(piPath)));
+      const changelogPath = path.join(packageRoot, "CHANGELOG.md");
+      if (existsSync(changelogPath)) {
+        return changelogPath;
+      }
+    }
+  } catch {
+    // Try the npm global module location.
+  }
+  try {
+    const npmRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf-8" });
+    const root = (npmRoot.stdout ?? "").trim();
+    if (root.length > 0) {
+      const changelogPath = path.join(
+        root,
+        "@earendil-works",
+        "pi-coding-agent",
+        "CHANGELOG.md"
+      );
+      if (existsSync(changelogPath)) {
+        return changelogPath;
+      }
+    }
+  } catch {
+    // The changelog cannot be located.
+  }
+  return null;
+};
+
+const sendAgentText = async (
+  conn: AgentClientConnection,
+  sessionId: string,
+  text: string
+): Promise<void> => {
+  await conn.sessionUpdate({
+    sessionId,
+    update: {
+      content: { text, type: "text" },
+      sessionUpdate: "agent_message_chunk",
+    },
+  });
+};
+
+const handleCompactCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  args: string[]
+): Promise<void> => {
+  const customText = args.join(" ").trim();
+  const customInstructions = customText.length > 0 ? customText : undefined;
+  const result = asRecord(await session.proc.compact(customInstructions));
+  const tokensBefore =
+    typeof result?.tokensBefore === "number" ? result.tokensBefore : null;
+  const summary = typeof result?.summary === "string" ? result.summary : null;
+  const headerLines = [
+    `Compaction completed.${customInstructions === undefined ? "" : " (custom instructions applied)"}`,
+    tokensBefore === null ? null : `Tokens before: ${tokensBefore}`,
+  ].filter((line): line is string => line !== null);
+  const text = `${headerLines.join("\n")}${summary === null || summary.length === 0 ? "" : `\n\n${summary}`}`;
+  await sendAgentText(conn, session.sessionId, text);
+};
+
+const tokenStatsParts = (value: unknown): string[] => {
+  const tokens = asRecord(value);
+  if (tokens === undefined) {
+    return [];
+  }
+  const fields = [
+    ["input", "in"],
+    ["output", "out"],
+    ["cacheRead", "cache read"],
+    ["cacheWrite", "cache write"],
+    ["total", "total"],
+  ] as const;
+  return fields.flatMap(([field, label]) =>
+    typeof tokens[field] === "number" ? [`${label} ${tokens[field]}`] : []
+  );
+};
+
+const handleSessionCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession
+): Promise<void> => {
+  const rawStats = await session.proc.getSessionStats();
+  const stats = asRecord(rawStats);
+  const lines: string[] = [];
+  if (typeof stats?.sessionId === "string" && stats.sessionId.length > 0) {
+    lines.push(`Session: ${stats.sessionId}`);
+  }
+  if (typeof stats?.sessionFile === "string" && stats.sessionFile.length > 0) {
+    lines.push(`Session file: ${stats.sessionFile}`);
+  }
+  if (typeof stats?.totalMessages === "number") {
+    lines.push(`Messages: ${stats.totalMessages}`);
+  }
+  if (typeof stats?.cost === "number") {
+    lines.push(`Cost: ${stats.cost}`);
+  }
+  const tokenParts = tokenStatsParts(stats?.tokens);
+  if (tokenParts.length > 0) {
+    lines.push(`Tokens: ${tokenParts.join(", ")}`);
+  }
+  const text =
+    lines.length > 0
+      ? lines.join("\n")
+      : `Session stats:\n${JSON.stringify(rawStats, null, 2)}`;
+  await sendAgentText(conn, session.sessionId, text);
+};
+
+const handleNameCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  args: string[]
+): Promise<void> => {
+  const name = args.join(" ").trim();
+  if (name.length === 0) {
+    await sendAgentText(conn, session.sessionId, "Usage: /name <name>");
+    return;
+  }
+  try {
+    await session.proc.setSessionName(name);
+  } catch (error: unknown) {
+    const message = errorMessage(error);
+    const hint = /set_session_name/iu.test(message)
+      ? " This requires a newer pi version that supports `set_session_name` in RPC mode."
+      : "";
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      `Failed to set session name: ${message}${hint}`
+    );
+    return;
+  }
+  await conn.sessionUpdate({
+    sessionId: session.sessionId,
+    update: {
+      sessionUpdate: "session_info_update",
+      title: name,
+      updatedAt: new Date().toISOString(),
+    },
+  });
+  await sendAgentText(conn, session.sessionId, `Session name set: ${name}`);
+};
+
+const modeCommandDetails = (
+  command: "follow-up" | "steering"
+): {
+  label: string;
+  stateField: "followUpMode" | "steeringMode";
+  usage: string;
+} =>
+  command === "steering"
+    ? {
+        label: "Steering",
+        stateField: "steeringMode",
+        usage: "Usage: /steering all | /steering one-at-a-time",
+      }
+    : {
+        label: "Follow-up",
+        stateField: "followUpMode",
+        usage: "Usage: /follow-up all | /follow-up one-at-a-time",
+      };
+
+const handleModeCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  args: string[],
+  command: "follow-up" | "steering"
+): Promise<void> => {
+  const mode = (args[0] ?? "").toLowerCase();
+  const details = modeCommandDetails(command);
+  const state = asRecord(await session.proc.getState());
+  const current = stringValue(state?.[details.stateField]);
+  if (mode.length === 0) {
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      `${details.label} mode: ${current.length > 0 ? current : "unknown"}`
+    );
+    return;
+  }
+  if (mode !== "all" && mode !== "one-at-a-time") {
+    await sendAgentText(conn, session.sessionId, details.usage);
+    return;
+  }
+  await (command === "steering"
+    ? session.proc.setSteeringMode(mode)
+    : session.proc.setFollowUpMode(mode));
+  await sendAgentText(
+    conn,
+    session.sessionId,
+    `${details.label} mode set to: ${mode}`
+  );
+};
+
+const handleChangelogCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession
+): Promise<void> => {
+  const changelogPath = findChangelog();
+  if (changelogPath === null || changelogPath.length === 0) {
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      "Changelog not found (couldn't locate pi installation)."
+    );
+    return;
+  }
+  let text: string;
+  try {
+    text = readFileSync(changelogPath, "utf-8");
+  } catch (error: unknown) {
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      `Failed to read changelog: ${errorMessage(error)}`
+    );
+    return;
+  }
+  const maxCharacters = 20_000;
+  if (text.length > maxCharacters) {
+    text = `${text.slice(0, maxCharacters)}\n\n...(truncated)...`;
+  }
+  await sendAgentText(conn, session.sessionId, text);
+};
+
+const sessionFileForExport = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession
+): Promise<string | null> => {
+  const state = asRecord(await session.proc.getState());
+  const sessionFile =
+    typeof state?.sessionFile === "string" ? state.sessionFile : null;
+  const messageCount =
+    typeof state?.messageCount === "number" ? state.messageCount : 0;
+  if (
+    sessionFile === null ||
+    sessionFile.length === 0 ||
+    messageCount === 0 ||
+    !existsSync(sessionFile)
+  ) {
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      "Nothing to export yet (no session messages). Send a prompt first."
+    );
+    return null;
+  }
+  try {
+    if (readFileSync(sessionFile, "utf-8").trim().length === 0) {
+      await sendAgentText(
+        conn,
+        session.sessionId,
+        "Nothing to export yet (empty session file). Send a prompt first."
+      );
+      return null;
+    }
+  } catch {
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      "Couldn't read session file for export. Try sending a prompt first."
+    );
+    return null;
+  }
+  return sessionFile;
+};
+
+const handleExportCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession
+): Promise<void> => {
+  if ((await sessionFileForExport(conn, session)) === null) {
+    return;
+  }
+  const safeSessionId = session.sessionId.replaceAll(/[^a-zA-Z0-9_-]/gu, "_");
+  const outputPath = path.join(session.cwd, `pi-session-${safeSessionId}.html`);
+  let resultPath: string;
+  try {
+    const result = await session.proc.exportHtml(outputPath);
+    resultPath = result.path;
+  } catch (error: unknown) {
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      `Export failed: ${errorMessage(error)}`
+    );
+    return;
+  }
+  if (resultPath.length === 0) {
+    await sendAgentText(
+      conn,
+      session.sessionId,
+      "Export failed: no output path returned by pi."
+    );
+    return;
+  }
+  await sendAgentText(conn, session.sessionId, "Session exported: ");
+  await conn.sessionUpdate({
+    sessionId: session.sessionId,
+    update: {
+      content: {
+        mimeType: "text/html",
+        name: `pi-session-${safeSessionId}.html`,
+        title: "Session exported",
+        type: "resource_link",
+        uri: `file://${resultPath}`,
+      },
+      sessionUpdate: "agent_message_chunk",
+    },
+  });
+};
+
+const autoCompactEnabled = (mode: string, current: boolean): boolean => {
+  if (["on", "true", "enable", "enabled"].includes(mode)) {
+    return true;
+  }
+  if (["off", "false", "disable", "disabled"].includes(mode)) {
+    return false;
+  }
+  return !current;
+};
+
+const handleAutoCompactCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  args: string[]
+): Promise<void> => {
+  const mode = (args[0] ?? "toggle").toLowerCase();
+  let current = false;
+  if (
+    ![
+      "on",
+      "true",
+      "enable",
+      "enabled",
+      "off",
+      "false",
+      "disable",
+      "disabled",
+    ].includes(mode)
+  ) {
+    current = Boolean(
+      asRecord(await session.proc.getState())?.autoCompactionEnabled
+    );
+  }
+  const enabled = autoCompactEnabled(mode, current);
+  await session.proc.setAutoCompaction(enabled);
+  await sendAgentText(
+    conn,
+    session.sessionId,
+    `Auto-compaction ${enabled ? "enabled" : "disabled"}.`
+  );
+};
+
+type SlashCommandHandler = (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  args: string[]
+) => Promise<void>;
+
+const slashCommandHandlers: Partial<Record<string, SlashCommandHandler>> = {
+  autocompact: handleAutoCompactCommand,
+  changelog: async (conn, session) => {
+    await handleChangelogCommand(conn, session);
+  },
+  compact: handleCompactCommand,
+  export: async (conn, session) => {
+    await handleExportCommand(conn, session);
+  },
+  "follow-up": async (conn, session, args) => {
+    await handleModeCommand(conn, session, args, "follow-up");
+  },
+  name: handleNameCommand,
+  session: async (conn, session) => {
+    await handleSessionCommand(conn, session);
+  },
+  steering: async (conn, session, args) => {
+    await handleModeCommand(conn, session, args, "steering");
+  },
+};
+
+const handleSlashCommand = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  message: string
+): Promise<boolean> => {
+  const trimmed = message.trim();
+  const space = trimmed.indexOf(" ");
+  const command = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space);
+  const argsString = space === -1 ? "" : trimmed.slice(space + 1);
+  const handler = slashCommandHandlers[command];
+  if (!handler) {
+    return false;
+  }
+  await handler(conn, session, parseCommandArgs(argsString));
+  return true;
+};
+
+type TodoPlan = ReturnType<typeof todoResultToPlanEntries>;
+
+const restoredToolArguments = (messages: unknown[]): Map<string, unknown> => {
+  const argumentsById = new Map<string, unknown>();
+  for (const messageValue of messages) {
+    const message = asRecord(messageValue);
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) {
+      continue;
+    }
+    for (const blockValue of message.content) {
+      const block = asRecord(blockValue);
+      if (block?.type === "toolCall" && typeof block.id === "string") {
+        argumentsById.set(block.id, block.arguments);
+      }
+    }
+  }
+  return argumentsById;
+};
+
+const replayUserMessage = async (
+  conn: AgentClientConnection,
+  sessionId: string,
+  message: UnknownRecord
+): Promise<void> => {
+  const text = normalizePiMessageText(message.content);
+  if (text.length === 0) {
+    return;
+  }
+  await conn.sessionUpdate({
+    sessionId,
+    update: {
+      content: { text, type: "text" },
+      sessionUpdate: "user_message_chunk",
+    },
+  });
+};
+
+const replayAssistantMessage = async (
+  conn: AgentClientConnection,
+  sessionId: string,
+  message: UnknownRecord
+): Promise<void> => {
+  const text = normalizePiAssistantText(message.content);
+  if (text) {
+    await sendAgentText(conn, sessionId, text);
+  }
+};
+
+const replayBashResult = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  message: UnknownRecord,
+  details: {
+    isError: boolean;
+    rawInput: unknown;
+    toolCallId: string;
+    toolName: string;
+  }
+): Promise<void> => {
+  const text = bashResultText(message);
+  await conn.sessionUpdate({
+    sessionId: session.sessionId,
+    update: {
+      _meta: bashTerminalInfoMeta(details.toolCallId, session.cwd),
+      content: bashTerminalContent(details.toolCallId),
+      kind: "execute",
+      sessionUpdate: "tool_call",
+      status: "completed",
+      title:
+        bashCommand(details.rawInput) ??
+        bashCommand(message) ??
+        details.toolName,
+      toolCallId: details.toolCallId,
+    },
+  });
+  await conn.sessionUpdate({
+    sessionId: session.sessionId,
+    update: {
+      _meta: {
+        ...(text ? bashTerminalOutputMeta(details.toolCallId, text) : {}),
+        ...bashTerminalExitMeta(
+          details.toolCallId,
+          bashExitCode(message, details.isError)
+        ),
+      },
+      sessionUpdate: "tool_call_update",
+      status: details.isError ? "failed" : "completed",
+      toolCallId: details.toolCallId,
+    },
+  });
+};
+
+const toolKind = (toolName: string): "edit" | "other" | "read" => {
+  if (toolName === "read") {
+    return "read";
+  }
+  return toolName === "write" || toolName === "edit" ? "edit" : "other";
+};
+
+const replayStandardToolResult = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  message: UnknownRecord,
+  details: {
+    isError: boolean;
+    rawInput: unknown;
+    toolCallId: string;
+    toolName: string;
+  }
+): Promise<void> => {
+  const locations = toToolCallLocations(details.rawInput, session.cwd);
+  await conn.sessionUpdate({
+    sessionId: session.sessionId,
+    update: {
+      kind: toolKind(details.toolName),
+      rawInput: details.rawInput,
+      rawOutput: message,
+      sessionUpdate: "tool_call",
+      status: "completed",
+      title: details.toolName,
+      toolCallId: details.toolCallId,
+      ...(locations ? { locations } : {}),
+    },
+  });
+  const text = toolResultToText(message);
+  await conn.sessionUpdate({
+    sessionId: session.sessionId,
+    update: {
+      content: text
+        ? [{ content: { text, type: "text" }, type: "content" }]
+        : null,
+      rawOutput: message,
+      sessionUpdate: "tool_call_update",
+      status: details.isError ? "failed" : "completed",
+      toolCallId: details.toolCallId,
+    },
+  });
+};
+
+const replayToolResult = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  message: UnknownRecord,
+  restoredArgs: Map<string, unknown>,
+  todoPlan: TodoPlan
+): Promise<TodoPlan> => {
+  const toolName = stringValue(message.toolName, "tool");
+  const nextTodoPlan =
+    toolName === "todo"
+      ? (todoResultToPlanEntries(message) ?? todoPlan)
+      : todoPlan;
+  const toolCallId = stringValue(message.toolCallId, crypto.randomUUID());
+  const details = {
+    isError: Boolean(message.isError),
+    rawInput: message.args ?? restoredArgs.get(toolCallId) ?? null,
+    toolCallId,
+    toolName,
+  };
+  await (isBashTool(toolName)
+    ? replayBashResult(conn, session, message, details)
+    : replayStandardToolResult(conn, session, message, details));
+  return nextTodoPlan;
+};
+
+const replayMessage = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  messageValue: unknown,
+  restoredArgs: Map<string, unknown>,
+  todoPlan: TodoPlan
+): Promise<TodoPlan> => {
+  const message = asRecord(messageValue);
+  if (message === undefined) {
+    return todoPlan;
+  }
+  const role = stringValue(message.role);
+  if (role === "branchSummary") {
+    const text = normalizePiMessageText(message.content);
+    if (text.length > 0) {
+      await conn.sessionUpdate({
+        _meta: { [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true },
+        sessionId: session.sessionId,
+        update: {
+          content: { text, type: "text" },
+          sessionUpdate: "agent_message_chunk",
+        },
+      });
+    }
+  } else if (role === "user") {
+    await replayUserMessage(conn, session.sessionId, message);
+  } else if (role === "assistant") {
+    await replayAssistantMessage(conn, session.sessionId, message);
+  } else if (role === "toolResult") {
+    return await replayToolResult(
+      conn,
+      session,
+      message,
+      restoredArgs,
+      todoPlan
+    );
+  }
+  return todoPlan;
+};
+
+const replayMessages = async (
+  conn: AgentClientConnection,
+  session: MagPiAcpSession,
+  messages: unknown[],
+  restoredArgs: Map<string, unknown>,
+  index = 0,
+  todoPlan?: TodoPlan
+): Promise<TodoPlan> => {
+  const message = messages[index];
+  if (message === undefined) {
+    return todoPlan;
+  }
+  const nextTodoPlan = await replayMessage(
+    conn,
+    session,
+    message,
+    restoredArgs,
+    todoPlan
+  );
+  return await replayMessages(
+    conn,
+    session,
+    messages,
+    restoredArgs,
+    index + 1,
+    nextTodoPlan
+  );
+};
+
+const loadMessages = async (
+  proc: PiRpcProcess,
+  sessionFile: string,
+  leafId?: string | null
+): Promise<unknown[]> => {
+  const activeMessages = activeSessionMessages(sessionFile, leafId);
+  if (activeMessages.length > 0) {
+    return activeMessages.map((entry) => entry.message);
+  }
+  const messages = asRecord(await proc.getMessages())?.messages;
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  const result: unknown[] = [];
+  for (const message of messages) {
+    result.push(message);
+  }
+  return result;
+};
+
+const advertiseCommands = (
+  conn: AgentClientConnection,
+  sessionId: string,
+  proc: PiRpcProcess
+): void => {
+  setTimeout(() => {
+    void (async () => {
+      let commands: AvailableCommand[] = [];
+      try {
+        commands = toAvailableCommandsFromPiGetCommands(
+          await proc.getCommands()
+        );
+      } catch {
+        // Adapter commands remain available if Pi command discovery fails.
+      }
+      await conn.sessionUpdate({
+        sessionId,
+        update: {
+          availableCommands: mergeCommands(
+            commands,
+            builtinAvailableCommands()
+          ),
+          sessionUpdate: "available_commands_update",
+        },
+      });
+    })();
+  }, 0);
+};
+
+const treeNavigationOptions = (
+  method: string,
+  params: Record<string, unknown>
+): TreeNavigationOptions | null => {
+  if (method !== MAGPI_ACP_NAVIGATE_TREE_METHOD) {
+    return null;
+  }
+  const { summarize, customInstructions } = params;
+  if (summarize !== undefined && typeof summarize !== "boolean") {
+    throw RequestError.invalidParams("summarize must be a boolean.");
+  }
+  if (
+    customInstructions !== undefined &&
+    typeof customInstructions !== "string"
+  ) {
+    throw RequestError.invalidParams("customInstructions must be a string.");
+  }
+  return { customInstructions, summarize: summarize ?? false };
+};
+
+const hasSessionName = (stateValue: unknown): boolean => {
+  const name = stringValue(asRecord(stateValue)?.sessionName)?.trim();
+  return name !== undefined && name.length > 0;
+};
+
+const hasUserMessage = (messagesValue: unknown): boolean => {
+  const messages = asRecord(messagesValue)?.messages;
+  return (
+    Array.isArray(messages) &&
+    messages.some((candidate) => asRecord(candidate)?.role === "user")
+  );
+};
+
+const modelName = (stateValue: unknown): string | null => {
+  const model = asRecord(asRecord(stateValue)?.model);
+  const provider = stringValue(model?.provider)?.trim();
+  const modelId = stringValue(model?.id)?.trim();
+  if (
+    provider === undefined ||
+    provider.length === 0 ||
+    modelId === undefined ||
+    modelId.length === 0
+  ) {
+    return null;
+  }
+  return `${provider}/${modelId}`;
+};
+
+const assertKnownExtensionMethod = (method: string): void => {
+  if (
+    ![
+      MAGPI_ACP_FORK_MESSAGES_METHOD,
+      MAGPI_ACP_TREE_METHOD,
+      MAGPI_ACP_NAVIGATE_TREE_METHOD,
+    ].includes(method)
+  ) {
+    throw RequestError.methodNotFound(method);
+  }
+};
 
 export class MagPiAcpAgent implements ACPAgent {
-  private readonly conn: AgentSideConnection
-  private readonly sessions = new SessionManager()
-  private readonly restoringSessions = new Map<string, Promise<MagPiAcpSession>>()
-  private readonly autoTitlingSessions = new Set<string>()
-  private generateTitle = generateThreadTitle
-  private supportsFormElicitation = false
+  private readonly conn: AgentClientConnection;
+  private readonly sessions = new SessionManager();
+  private readonly restoringSessions = new Map<
+    string,
+    Promise<MagPiAcpSession>
+  >();
+  private readonly autoTitlingSessions = new Set<string>();
+  private readonly generateTitle = generateThreadTitle;
+  private supportsFormElicitation = false;
 
   dispose(): void {
-    this.sessions.disposeAll()
+    this.sessions.disposeAll();
   }
 
   // Remember recent session cwd and use it as the default filter.
-  private lastSessionCwd: string | null = null
+  private lastSessionCwd: string | null = null;
 
-  constructor(conn: AgentSideConnection, _config?: unknown) {
-    this.conn = conn
-    void _config
+  constructor(conn: AgentClientConnection, _config?: unknown) {
+    this.conn = conn;
+    void _config;
   }
 
-  private cleanupFailedNewSession(sessionId: string, state?: any | null): void {
-    this.sessions.close(sessionId)
+  private cleanupFailedNewSession(sessionId: string, state?: unknown): void {
+    this.sessions.close(sessionId);
 
+    const stateRecord = asRecord(state);
     const sessionFile =
-      typeof state?.sessionFile === 'string' && state.sessionFile.trim()
-        ? state.sessionFile
-        : findPiSession(sessionId)?.sessionFile
+      typeof stateRecord?.sessionFile === "string" &&
+      stateRecord.sessionFile.trim()
+        ? stateRecord.sessionFile
+        : findPiSession(sessionId)?.sessionFile;
 
-    if (sessionFile) {
+    if (sessionFile !== undefined && sessionFile.length > 0) {
       try {
-        if (existsSync(sessionFile)) unlinkSync(sessionFile)
+        if (existsSync(sessionFile)) {
+          unlinkSync(sessionFile);
+        }
       } catch {
         // ignore cleanup failures; the auth/internal error is the primary result
       }
@@ -183,212 +1379,244 @@ export class MagPiAcpAgent implements ACPAgent {
 
   private async restoreSession(
     sessionId: string,
-    opts?: { mcpServers?: LoadSessionRequest['mcpServers'] }
+    opts?: { mcpServers?: LoadSessionRequest["mcpServers"] }
   ): Promise<MagPiAcpSession> {
-    const existing = this.sessions.maybeGet(sessionId)
-    if (existing) return existing
+    const existing = this.sessions.maybeGet(sessionId);
+    if (existing !== undefined) {
+      return existing;
+    }
 
-    const inFlight = this.restoringSessions.get(sessionId)
-    if (inFlight) return inFlight
+    const inFlight = this.restoringSessions.get(sessionId);
+    if (inFlight !== undefined) {
+      return await inFlight;
+    }
 
     const restorePromise = (async () => {
-      const stored = findPiSession(sessionId)
-      if (!stored) {
-        throw RequestError.invalidParams(`Unknown sessionId: ${sessionId}`)
+      const stored = findPiSession(sessionId);
+      if (stored === null) {
+        throw RequestError.invalidParams(`Unknown sessionId: ${sessionId}`);
       }
 
-      const cwd = stored.cwd
+      const { cwd } = stored;
 
-      let proc: PiRpcProcess
+      let proc: PiRpcProcess;
       try {
         proc = await PiRpcProcess.spawn({
           cwd,
+          piCommand: process.env.MAGPI_ACP_PI_COMMAND,
           sessionPath: stored.sessionFile,
-          piCommand: process.env.MAGPI_ACP_PI_COMMAND
-        })
-      } catch (e: any) {
-        if (e?.name === 'PiRpcSpawnError') {
-          throw RequestError.internalError({ code: e?.code }, String(e?.message ?? e))
+        });
+      } catch (error: unknown) {
+        const errorRecord = asRecord(error);
+        if (errorRecord?.name === "PiRpcSpawnError") {
+          throw RequestError.internalError(
+            { code: errorRecord.code },
+            errorMessage(error)
+          );
         }
-        throw e
+        throw error instanceof Error ? error : new Error(errorMessage(error));
       }
 
       const session = this.sessions.getOrCreate(sessionId, {
+        conn: this.conn,
         cwd,
         mcpServers: opts?.mcpServers ?? [],
-        conn: this.conn,
+        proc,
         supportsFormElicitation: this.supportsFormElicitation,
-        proc
-      })
+      });
 
-      this.lastSessionCwd = cwd
-      return session
-    })()
+      this.lastSessionCwd = cwd;
+      return session;
+    })();
 
-    this.restoringSessions.set(sessionId, restorePromise)
+    this.restoringSessions.set(sessionId, restorePromise);
 
     try {
-      return await restorePromise
+      return await restorePromise;
     } finally {
-      this.restoringSessions.delete(sessionId)
+      this.restoringSessions.delete(sessionId);
     }
   }
 
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
+    await Promise.resolve();
     // We currently only support ACP protocol version 1.
-    const supportedVersion = 1
-    const requested = params.protocolVersion
-    this.supportsFormElicitation = params.clientCapabilities?.elicitation?.form != null
+    const supportedVersion = 1;
+    const requested = params.protocolVersion;
+    this.supportsFormElicitation =
+      params.clientCapabilities?.elicitation?.form !== undefined &&
+      params.clientCapabilities.elicitation.form !== null;
+    const clientCapabilities = asRecord(params.clientCapabilities);
+    const clientMeta = asRecord(clientCapabilities?._meta);
 
     return {
-      protocolVersion: requested === supportedVersion ? requested : supportedVersion,
-      agentInfo: {
-        name: 'magpi-acp',
-        title: 'MagPi ACP',
-        version: pkg.version ?? '0.0.0'
-      },
-      // Include launch metadata only when the client advertises integrated terminal authentication.
-      authMethods: getAuthMethods({
-        supportsTerminalAuthMeta: (params as any)?.clientCapabilities?._meta?.['terminal-auth'] === true
-      }),
       agentCapabilities: {
+        _meta: {
+          [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true,
+          [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,
+          [MAGPI_ACP_TREE_PICKER_CAPABILITY]: true,
+        },
         loadSession: true,
         mcpCapabilities: { http: false, sse: false },
         promptCapabilities: {
-          image: true,
           audio: false,
-          embeddedContext: process.env.MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT === 'true'
+          embeddedContext:
+            process.env.MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT === "true",
+          image: true,
         },
         sessionCapabilities: {
           fork: {},
           // **UNSTABLE** ACP capability for native session pickers.
-          list: {}
+          list: {},
         },
-        _meta: {
-          [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,
-          [MAGPI_ACP_TREE_PICKER_CAPABILITY]: true,
-          [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true
-        }
-      }
-    }
+      },
+      agentInfo: {
+        name: "magpi-acp",
+        title: "MagPi ACP",
+        version: pkg.version ?? "0.0.0",
+      },
+      // Include launch metadata only when the client advertises integrated terminal authentication.
+      authMethods: getAuthMethods({
+        supportsTerminalAuthMeta: clientMeta?.["terminal-auth"] === true,
+      }),
+      protocolVersion:
+        requested === supportedVersion ? requested : supportedVersion,
+    };
   }
 
   async newSession(params: NewSessionRequest) {
-    if (!isAbsolute(params.cwd)) {
-      throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`)
+    if (!path.isAbsolute(params.cwd)) {
+      throw RequestError.invalidParams(
+        `cwd must be an absolute path: ${params.cwd}`
+      );
     }
 
-    this.lastSessionCwd = params.cwd
+    this.lastSessionCwd = params.cwd;
 
     // Pi doesn't support mcpServers, but we accept and store.
     const session = await this.sessions.create({
+      conn: this.conn,
       cwd: params.cwd,
       mcpServers: params.mcpServers,
-      conn: this.conn,
+      piCommand: process.env.MAGPI_ACP_PI_COMMAND,
       supportsFormElicitation: this.supportsFormElicitation,
-      piCommand: process.env.MAGPI_ACP_PI_COMMAND
-    })
+    });
 
     // Fetch state + models once (parallel) to reduce startup latency.
-    let state: any = null
-    let availableModels: any = null
-    let stateErr: unknown = null
-    let availableModelsErr: unknown = null
+    let state: unknown = null;
+    let availableModels: unknown = null;
+    let stateErr: unknown = null;
+    let availableModelsErr: unknown = null;
 
     await Promise.all([
       session.proc
         .getState()
-        .then(s => {
-          state = s as any
+        .then((value) => {
+          state = value;
         })
-        .catch(err => {
-          stateErr = err
-          state = null
+        .catch((error: unknown) => {
+          stateErr = error;
+          state = null;
         }),
       session.proc
         .getAvailableModels()
-        .then(m => {
-          availableModels = m as any
+        .then((value) => {
+          availableModels = value;
         })
-        .catch(err => {
-          availableModelsErr = err
-          availableModels = null
-        })
-    ])
+        .catch((error: unknown) => {
+          availableModelsErr = error;
+          availableModels = null;
+        }),
+    ]);
 
-    const availableModelsAuthErr = maybeAuthRequiredError(availableModelsErr)
+    const availableModelsAuthErr = maybeAuthRequiredError(availableModelsErr);
 
-    if (availableModelsAuthErr) {
-      this.cleanupFailedNewSession(session.sessionId, state)
-      throw availableModelsAuthErr
+    if (availableModelsAuthErr !== null) {
+      this.cleanupFailedNewSession(session.sessionId, state);
+      throw availableModelsAuthErr;
     }
 
-    if (availableModelsErr) {
-      this.cleanupFailedNewSession(session.sessionId, state)
-      throw RequestError.internalError({}, String((availableModelsErr as Error)?.message ?? availableModelsErr))
+    if (availableModelsErr !== null) {
+      this.cleanupFailedNewSession(session.sessionId, state);
+      throw RequestError.internalError({}, errorMessage(availableModelsErr));
     }
 
     // If pi has no models available after spawning, it's effectively unauthenticated.
-    const rawModelsCount = Array.isArray(availableModels?.models) ? availableModels.models.length : 0
+    const rawModels = asRecord(availableModels)?.models;
+    const rawModelsCount = Array.isArray(rawModels) ? rawModels.length : 0;
 
     if (rawModelsCount === 0) {
-      this.cleanupFailedNewSession(session.sessionId, state)
+      this.cleanupFailedNewSession(session.sessionId, state);
       throw RequestError.authRequired(
         { authMethods: getAuthMethods() },
-        'Configure an API key or log in with an OAuth provider.'
-      )
+        "Configure an API key or log in with an OAuth provider."
+      );
     }
 
-    if (stateErr && maybeAuthRequiredError(stateErr)) {
-      this.cleanupFailedNewSession(session.sessionId, state)
+    if (stateErr !== null && maybeAuthRequiredError(stateErr) !== null) {
+      this.cleanupFailedNewSession(session.sessionId, state);
       throw RequestError.authRequired(
         { authMethods: getAuthMethods() },
-        'Configure an API key or log in with an OAuth provider.'
-      )
+        "Configure an API key or log in with an OAuth provider."
+      );
     }
 
-    const { configOptions, models, modes } = await getSessionConfiguration(session.proc, {
-      state,
-      availableModels
-    })
+    const { configOptions, models, modes } = await getSessionConfiguration(
+      session.proc,
+      {
+        availableModels,
+        state,
+      }
+    );
 
-    const quietStartup = getQuietStartup(params.cwd)
-    const updateNotice = buildUpdateNotice()
+    const quietStartup = getQuietStartup(params.cwd);
+    const updateNotice = buildUpdateNotice();
 
     // If quietStartup is enabled, suppress the full "startup info" prelude, but still surface
     // the "New version available" notice (if any) since it's high-signal and actionable.
-    const preludeText = quietStartup ? (updateNotice ? updateNotice + '\n' : '') : buildStartupInfo({ updateNotice })
+    let preludeText = buildStartupInfo({ updateNotice });
+    if (quietStartup) {
+      preludeText =
+        updateNotice === null || updateNotice.length === 0
+          ? ""
+          : `${updateNotice}\n`;
+    }
 
-    if (preludeText)
-      session.setStartupInfo(preludeText)
+    if (preludeText.length > 0) {
+      session.setStartupInfo(preludeText);
 
       // Policy: within a single ACP connection (one client window), keep only one live pi subprocess.
       // This avoids leaking subprocesses when clients start new sessions but don't explicitly close old ones.
       // It does NOT affect other client windows because they run in separate agent processes.
       //
       // (Tests sometimes stub out `this.sessions`, so guard the call.)
-    ;(this.sessions as any).closeAllExcept?.(session.sessionId)
+    }
+    this.sessions.closeAllExcept(session.sessionId);
 
     const response = {
-      sessionId: session.sessionId,
       configOptions,
       models,
-      modes
-    }
+      modes,
+      sessionId: session.sessionId,
+    };
 
     // Try to send it immediately after session/new returns; if the client ignores it,
     // it will still be emitted as the first chunk of the first prompt.
     setTimeout(() => {
-      if (preludeText) session.sendStartupInfoIfPending()
-      void session.sendUsageUpdate()
-    }, 0)
+      if (preludeText.length > 0) {
+        session.sendStartupInfoIfPending();
+      }
+      void session.sendUsageUpdate();
+    }, 0);
 
     // Advertise slash commands after session/new so clients recognize the session ID.
     setTimeout(() => {
       void (async () => {
-        let commands: AvailableCommand[] = []
+        let commands: AvailableCommand[] = [];
         try {
-          commands = toAvailableCommandsFromPiGetCommands(await session.proc.getCommands())
+          commands = toAvailableCommandsFromPiGetCommands(
+            await session.proc.getCommands()
+          );
         } catch {
           // Adapter commands remain available if Pi command discovery fails.
         }
@@ -396,1307 +1624,395 @@ export class MagPiAcpAgent implements ACPAgent {
         await this.conn.sessionUpdate({
           sessionId: session.sessionId,
           update: {
-            sessionUpdate: 'available_commands_update',
-            availableCommands: mergeCommands(commands, builtinAvailableCommands())
-          }
-        })
-      })()
-    }, 0)
+            availableCommands: mergeCommands(
+              commands,
+              builtinAvailableCommands()
+            ),
+            sessionUpdate: "available_commands_update",
+          },
+        });
+      })();
+    }, 0);
 
-    return response
+    return response;
   }
 
-  async authenticate(_params: AuthenticateRequest) {
+  async authenticate(params: AuthenticateRequest): Promise<void> {
     // Terminal Auth is handled out-of-band by re-launching the binary with `--terminal-login`.
     // If the client calls `authenticate` anyway, we can no-op successfully.
-    return
+    void params;
+    void this.conn;
+    await Promise.resolve();
   }
 
   async prompt(params: PromptRequest): Promise<PromptResponse> {
-    const session = await this.restoreSession(params.sessionId)
+    const session = await this.restoreSession(params.sessionId);
+    const { images, message } = promptToPiMessage(params.prompt);
 
-    const { message, images } = promptToPiMessage(params.prompt)
-
-    // Built-in ACP slash command handling (headless-friendly subset).
-    // Note: file-based slash commands are expanded inside session.prompt().
-    if (images.length === 0 && message.trimStart().startsWith('/')) {
-      const trimmed = message.trim()
-      const space = trimmed.indexOf(' ')
-      const cmd = space === -1 ? trimmed.slice(1) : trimmed.slice(1, space)
-      const argsString = space === -1 ? '' : trimmed.slice(space + 1)
-      const args = parseCommandArgs(argsString)
-
-      if (cmd === 'compact') {
-        const customInstructions = args.join(' ').trim() || undefined
-        const res = await session.proc.compact(customInstructions)
-
-        const r: any = res && typeof res === 'object' ? (res as any) : null
-        const tokensBefore = typeof r?.tokensBefore === 'number' ? r.tokensBefore : null
-        const summary = typeof r?.summary === 'string' ? r.summary : null
-
-        const headerLines = [
-          `Compaction completed.${customInstructions ? ' (custom instructions applied)' : ''}`,
-          tokensBefore !== null ? `Tokens before: ${tokensBefore}` : null
-        ].filter(Boolean)
-
-        const text = headerLines.join('\n') + (summary ? `\n\n${summary}` : '')
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
-
-      if (cmd === 'session') {
-        const stats = (await session.proc.getSessionStats()) as any
-
-        const lines: string[] = []
-        if (stats?.sessionId) lines.push(`Session: ${stats.sessionId}`)
-        if (stats?.sessionFile) lines.push(`Session file: ${stats.sessionFile}`)
-        if (typeof stats?.totalMessages === 'number') lines.push(`Messages: ${stats.totalMessages}`)
-
-        if (typeof stats?.cost === 'number') lines.push(`Cost: ${stats.cost}`)
-
-        const t = stats?.tokens
-        if (t && typeof t === 'object') {
-          const parts: string[] = []
-          if (typeof t.input === 'number') parts.push(`in ${t.input}`)
-          if (typeof t.output === 'number') parts.push(`out ${t.output}`)
-          if (typeof t.cacheRead === 'number') parts.push(`cache read ${t.cacheRead}`)
-          if (typeof t.cacheWrite === 'number') parts.push(`cache write ${t.cacheWrite}`)
-          if (typeof t.total === 'number') parts.push(`total ${t.total}`)
-          if (parts.length) lines.push(`Tokens: ${parts.join(', ')}`)
-        }
-
-        // Fallback if stats shape changes.
-        const text = lines.length ? lines.join('\n') : `Session stats:\n${JSON.stringify(stats, null, 2)}`
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
-
-      if (cmd === 'name') {
-        const name = args.join(' ').trim()
-        if (!name) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text: 'Usage: /name <name>' }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        try {
-          await session.proc.setSessionName(name)
-        } catch (e: any) {
-          const msg = String(e?.message ?? e)
-          const hint = /set_session_name/i.test(msg)
-            ? ' This requires a newer pi version that supports `set_session_name` in RPC mode.'
-            : ''
-
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text: `Failed to set session name: ${msg}${hint}` }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'session_info_update',
-            title: name,
-            updatedAt: new Date().toISOString()
-          }
-        })
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Session name set: ${name}` }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
-
-      if (cmd === 'steering') {
-        const modeRaw = String(args[0] ?? '').toLowerCase()
-        const state = (await session.proc.getState()) as any
-        const current = String(state?.steeringMode ?? '')
-
-        // If no arg, just report current.
-        if (!modeRaw) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: `Steering mode: ${current || 'unknown'}`
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        if (modeRaw !== 'all' && modeRaw !== 'one-at-a-time') {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: 'Usage: /steering all | /steering one-at-a-time'
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        await session.proc.setSteeringMode(modeRaw as 'all' | 'one-at-a-time')
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Steering mode set to: ${modeRaw}` }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
-
-      if (cmd === 'follow-up') {
-        const modeRaw = String(args[0] ?? '').toLowerCase()
-        const state = (await session.proc.getState()) as any
-        const current = String(state?.followUpMode ?? '')
-
-        // If no arg, just report current.
-        if (!modeRaw) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: `Follow-up mode: ${current || 'unknown'}`
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        if (modeRaw !== 'all' && modeRaw !== 'one-at-a-time') {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: 'Usage: /follow-up all | /follow-up one-at-a-time'
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        await session.proc.setFollowUpMode(modeRaw as 'all' | 'one-at-a-time')
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text: `Follow-up mode set to: ${modeRaw}` }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
-
-      if (cmd === 'changelog') {
-        // Read pi's installed CHANGELOG.md. Adapter-side, no model call.
-        const findChangelog = (): string | null => {
-          // 1) Locate the installed pi package by resolving the `pi` executable.
-          // On Node installs, `pi` typically resolves to .../@earendil-works/pi-coding-agent/dist/cli.js
-          try {
-            const whichCmd = process.platform === 'win32' ? 'where' : 'which'
-            const which = spawnSync(whichCmd, ['pi'], { encoding: 'utf-8' })
-            const piPath = String(which.stdout ?? '')
-              .split(/\r?\n/)[0]
-              ?.trim()
-
-            if (piPath) {
-              const resolved = realpathSync(piPath)
-              const pkgRoot = dirname(dirname(resolved))
-              const p = join(pkgRoot, 'CHANGELOG.md')
-              if (existsSync(p)) return p
-            }
-          } catch {
-            // ignore
-          }
-
-          // 2) Fallback: ask npm where global modules live.
-          try {
-            const npmRoot = spawnSync('npm', ['root', '-g'], { encoding: 'utf-8' })
-            const root = String(npmRoot.stdout ?? '').trim()
-            if (root) {
-              const p = join(root, '@earendil-works', 'pi-coding-agent', 'CHANGELOG.md')
-              if (existsSync(p)) return p
-            }
-          } catch {
-            // ignore
-          }
-
-          return null
-        }
-
-        const changelogPath = findChangelog()
-        if (!changelogPath) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text: "Changelog not found (couldn't locate pi installation)." }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        let text = ''
-        try {
-          text = readFileSync(changelogPath, 'utf-8')
-        } catch (e: any) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text: `Failed to read changelog: ${String(e?.message ?? e)}` }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        // Keep it reasonably sized in chat.
-        const maxChars = 20_000
-        if (text.length > maxChars) text = text.slice(0, maxChars) + '\n\n...(truncated)...'
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: { type: 'text', text }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
-
-      if (cmd === 'export') {
-        // For now we always export into the session cwd and do not accept a user-provided path.
-        // IMPORTANT: pi's export_html reads the session JSONL file. If it doesn't exist yet
-        // (no messages) or is empty, pi throws and RPC mode emits an uncorrelated parse error
-        // (no id), which would otherwise hang our request. So we guard here.
-        const state = (await session.proc.getState()) as any
-        const sessionFile = typeof state?.sessionFile === 'string' ? state.sessionFile : null
-        const messageCount = typeof state?.messageCount === 'number' ? state.messageCount : 0
-
-        if (!sessionFile || messageCount === 0 || !existsSync(sessionFile)) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: 'Nothing to export yet (no session messages). Send a prompt first.'
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        try {
-          const raw = readFileSync(sessionFile, 'utf-8')
-          if (raw.trim().length === 0) {
-            await this.conn.sessionUpdate({
-              sessionId: session.sessionId,
-              update: {
-                sessionUpdate: 'agent_message_chunk',
-                content: {
-                  type: 'text',
-                  text: 'Nothing to export yet (empty session file). Send a prompt first.'
-                }
-              }
-            })
-            return { stopReason: 'end_turn' }
-          }
-        } catch {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: "Couldn't read session file for export. Try sending a prompt first."
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        const safeSessionId = session.sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
-        const outputPath = join(session.cwd, `pi-session-${safeSessionId}.html`)
-
-        let resultPath = ''
-        try {
-          const result = await session.proc.exportHtml(outputPath)
-          resultPath = result.path
-        } catch (e: any) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: `Export failed: ${String(e?.message ?? e)}`
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        if (!resultPath) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: {
-                type: 'text',
-                text: 'Export failed: no output path returned by pi.'
-              }
-            }
-          })
-          return { stopReason: 'end_turn' }
-        }
-
-        const uri = `file://${resultPath}`
-
-        // Emit a short prefix + a resource link. Many clients concatenate chunks into a single
-        // assistant message, so this avoids the "link + duplicate plain text" look.
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: {
-              type: 'text',
-              text: 'Session exported: '
-            }
-          }
-        })
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: {
-              type: 'resource_link',
-              name: `pi-session-${safeSessionId}.html`,
-              uri,
-              mimeType: 'text/html',
-              title: 'Session exported'
-            }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
-
-      if (cmd === 'autocompact') {
-        const mode = (args[0] ?? 'toggle').toLowerCase()
-        let enabled: boolean | null = null
-        if (mode === 'on' || mode === 'true' || mode === 'enable' || mode === 'enabled') enabled = true
-        else if (mode === 'off' || mode === 'false' || mode === 'disable' || mode === 'disabled') enabled = false
-
-        if (enabled === null) {
-          // toggle: read current state and invert.
-          const state = (await session.proc.getState()) as any
-          const current = Boolean(state?.autoCompactionEnabled)
-          enabled = !current
-        }
-
-        await session.proc.setAutoCompaction(enabled)
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'agent_message_chunk',
-            content: {
-              type: 'text',
-              text: `Auto-compaction ${enabled ? 'enabled' : 'disabled'}.`
-            }
-          }
-        })
-
-        return { stopReason: 'end_turn' }
-      }
+    if (
+      images.length === 0 &&
+      message.trimStart().startsWith("/") &&
+      (await handleSlashCommand(this.conn, session, message))
+    ) {
+      return { stopReason: "end_turn" };
     }
 
-    void this.autoTitleFirstMessage(session, message)
-    const result = await session.prompt(message, images)
-
-    // ACP StopReason does not include "error"; if pi fails we map to end_turn for now,
-    // unless we know this was a cancellation.
-    const stopReason: StopReason =
-      result === 'error' ? (session.wasCancelRequested() ? 'cancelled' : 'end_turn') : result
-
-    return { stopReason }
+    void this.autoTitleFirstMessage(session, message);
+    const result = await session.prompt(message, images);
+    let stopReason: StopReason;
+    if (result === "error") {
+      stopReason = session.wasCancelRequested() ? "cancelled" : "end_turn";
+    } else {
+      stopReason = result;
+    }
+    return { stopReason };
   }
 
-  private async autoTitleFirstMessage(session: MagPiAcpSession, message: string): Promise<void> {
-    if (this.autoTitlingSessions.has(session.sessionId)) return
-    this.autoTitlingSessions.add(session.sessionId)
+  private async autoTitleFirstMessage(
+    session: MagPiAcpSession,
+    message: string
+  ): Promise<void> {
+    if (this.autoTitlingSessions.has(session.sessionId)) {
+      return;
+    }
+    this.autoTitlingSessions.add(session.sessionId);
 
     try {
-      const [state, data] = (await Promise.all([session.proc.getState(), session.proc.getMessages()])) as [any, any]
-      if (typeof state?.sessionName === 'string' && state.sessionName.trim()) return
+      const [stateValue, messagesValue] = await Promise.all([
+        session.proc.getState(),
+        session.proc.getMessages(),
+      ]);
+      if (hasSessionName(stateValue) || hasUserMessage(messagesValue)) {
+        return;
+      }
 
-      const messages = Array.isArray(data?.messages) ? data.messages : []
-      if (messages.some((candidate: any) => candidate?.role === 'user')) return
-
-      const provider = String(state?.model?.provider ?? '').trim()
-      const modelId = String(state?.model?.id ?? '').trim()
-      if (!provider || !modelId) return
+      const model = modelName(stateValue);
+      if (model === null) {
+        return;
+      }
 
       const title = await this.generateTitle({
         cwd: session.cwd,
-        model: `${provider}/${modelId}`,
-        user: message
-      })
-      if (!title) return
+        model,
+        user: message,
+      });
+      if (title === null) {
+        return;
+      }
 
-      const latestState = (await session.proc.getState()) as any
-      if (typeof latestState?.sessionName === 'string' && latestState.sessionName.trim()) return
+      const latestState = await session.proc.getState();
+      if (hasSessionName(latestState)) {
+        return;
+      }
 
-      await session.proc.setSessionName(title)
+      await session.proc.setSessionName(title);
       await this.conn.sessionUpdate({
         sessionId: session.sessionId,
         update: {
-          sessionUpdate: 'session_info_update',
+          sessionUpdate: "session_info_update",
           title,
-          updatedAt: new Date().toISOString()
-        }
-      })
+          updatedAt: new Date().toISOString(),
+        },
+      });
     } catch {
       // Automatic titles are optional and must never affect the conversation.
     }
   }
 
   async cancel(params: CancelNotification): Promise<void> {
-    const session = this.sessions.maybeGet(params.sessionId)
-    if (!session) return
-    await session.cancel()
+    const session = this.sessions.maybeGet(params.sessionId);
+    if (session === undefined) {
+      return;
+    }
+    await session.cancel();
   }
 
-  async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
-    const rawEntryId = params._meta?.[MAGPI_ACP_FORK_ENTRY_ID_META]
-    if (rawEntryId !== undefined && (typeof rawEntryId !== 'string' || !rawEntryId.trim())) {
-      throw RequestError.invalidParams('Fork entry ID must be a non-empty string.')
+  async unstable_forkSession(
+    params: ForkSessionRequest
+  ): Promise<ForkSessionResponse> {
+    const rawEntryId = params._meta?.[MAGPI_ACP_FORK_ENTRY_ID_META];
+    if (
+      rawEntryId !== undefined &&
+      (typeof rawEntryId !== "string" || rawEntryId.trim().length === 0)
+    ) {
+      throw RequestError.invalidParams(
+        "Fork entry ID must be a non-empty string."
+      );
     }
-    const entryId = typeof rawEntryId === 'string' ? rawEntryId : undefined
-    const source = await this.restoreSession(params.sessionId)
-    const state = (await source.proc.getState()) as { sessionFile?: unknown }
-    if (typeof state.sessionFile !== 'string') {
-      throw RequestError.internalError({}, 'Pi did not return the source session file.')
+    const entryId = typeof rawEntryId === "string" ? rawEntryId : undefined;
+    const source = await this.restoreSession(params.sessionId);
+    const state = asRecord(await source.proc.getState());
+    if (typeof state?.sessionFile !== "string") {
+      throw RequestError.internalError(
+        {},
+        "Pi did not return the source session file."
+      );
     }
     const sessionId = await this.sessions.fork({
-      entryId,
       cwd: params.cwd,
+      entryId,
       piCommand: process.env.MAGPI_ACP_PI_COMMAND,
-      sourceSessionFile: state.sessionFile
-    })
-    return { sessionId }
+      sourceSessionFile: state.sessionFile,
+    });
+    return { sessionId };
   }
 
-  async extMethod(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-    if (![MAGPI_ACP_FORK_MESSAGES_METHOD, MAGPI_ACP_TREE_METHOD, MAGPI_ACP_NAVIGATE_TREE_METHOD].includes(method)) {
-      throw RequestError.methodNotFound(method)
+  async extMethod(
+    method: string,
+    params: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    assertKnownExtensionMethod(method);
+
+    const sessionId =
+      typeof params.sessionId === "string" ? params.sessionId : null;
+    if (sessionId === null || sessionId.length === 0) {
+      throw RequestError.invalidParams("sessionId is required.");
     }
 
-    const sessionId = typeof params.sessionId === 'string' ? params.sessionId : null
-    if (!sessionId) throw RequestError.invalidParams('sessionId is required.')
-
-    let navigationOptions: TreeNavigationOptions | null = null
-    if (method === MAGPI_ACP_NAVIGATE_TREE_METHOD) {
-      const { summarize, customInstructions } = params
-      if (summarize !== undefined && typeof summarize !== 'boolean') {
-        throw RequestError.invalidParams('summarize must be a boolean.')
-      }
-      if (customInstructions !== undefined && typeof customInstructions !== 'string') {
-        throw RequestError.invalidParams('customInstructions must be a string.')
-      }
-      navigationOptions = { summarize: summarize ?? false, customInstructions }
-    }
-
-    const session = await this.restoreSession(sessionId)
+    const navigationOptions = treeNavigationOptions(method, params);
+    const session = await this.restoreSession(sessionId);
     if (method === MAGPI_ACP_FORK_MESSAGES_METHOD) {
-      return { messages: await session.proc.getForkMessages() }
+      return { messages: await session.proc.getForkMessages() };
     }
 
     if (method === MAGPI_ACP_TREE_METHOD) {
-      return await session.proc.getTree()
+      return await session.proc.getTree();
     }
 
-    if (navigationOptions) {
-      const entryId = typeof params.entryId === 'string' && params.entryId.trim() ? params.entryId : null
-      if (!entryId) throw RequestError.invalidParams('entryId is required.')
-
-      const before = await session.proc.getTree()
-      const entry = findTreeMessage(before.tree, entryId)
-      if (!entry) throw RequestError.invalidParams(`Pi tree message not found: ${entryId}`)
-
-      const identity = (await session.proc.getState()) as { sessionFile?: unknown; sessionId?: unknown }
-      await session.proc.navigateTree(entryId, navigationOptions)
-      const [after, nextState] = await Promise.all([session.proc.getTree(), session.proc.getState()])
-      const nextIdentity = nextState as { sessionFile?: unknown; sessionId?: unknown }
-      if (nextIdentity.sessionFile !== identity.sessionFile || nextIdentity.sessionId !== identity.sessionId) {
-        throw RequestError.internalError({}, 'Pi tree navigation changed the session identity.')
+    if (navigationOptions !== null) {
+      const entryId =
+        typeof params.entryId === "string" && params.entryId.trim().length > 0
+          ? params.entryId
+          : null;
+      if (entryId === null) {
+        throw RequestError.invalidParams("entryId is required.");
       }
 
-      const role = entry.message?.role
+      const before = await session.proc.getTree();
+      const entry = findTreeMessage(before.tree, entryId);
+      if (entry === null) {
+        throw RequestError.invalidParams(
+          `Pi tree message not found: ${entryId}`
+        );
+      }
+
+      const identity = asRecord(await session.proc.getState());
+      await session.proc.navigateTree(entryId, navigationOptions);
+      const [after, nextState] = await Promise.all([
+        session.proc.getTree(),
+        session.proc.getState(),
+      ]);
+      const nextIdentity = asRecord(nextState);
+      if (
+        nextIdentity?.sessionFile !== identity?.sessionFile ||
+        nextIdentity?.sessionId !== identity?.sessionId
+      ) {
+        throw RequestError.internalError(
+          {},
+          "Pi tree navigation changed the session identity."
+        );
+      }
+
+      const role = entry.message?.role;
       return {
+        draft:
+          role === "user"
+            ? normalizePiMessageText(entry.message?.content)
+            : null,
         leafId: after.leafId,
-        draft: role === 'user' ? normalizePiMessageText(entry.message?.content) : null
-      }
+      };
     }
 
-    throw RequestError.methodNotFound(method)
+    throw RequestError.methodNotFound(method);
   }
 
-  async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
+  async listSessions(
+    params: ListSessionsRequest
+  ): Promise<ListSessionsResponse> {
+    await Promise.resolve();
     // Filter by cwd when provided; otherwise use the latest session cwd for a project-scoped picker.
-    const all = listPiSessions()
+    const all = listPiSessions();
 
-    const effectiveCwd = (params as any).cwd ?? this.lastSessionCwd
-    const filtered = effectiveCwd ? all.filter(s => s.cwd === effectiveCwd) : all
+    const requestedCwd = asRecord(params)?.cwd;
+    const effectiveCwd =
+      typeof requestedCwd === "string" ? requestedCwd : this.lastSessionCwd;
+    const filtered =
+      effectiveCwd === null || effectiveCwd.length === 0
+        ? all
+        : all.filter((session) => session.cwd === effectiveCwd);
 
     // Cursor-based pagination (opaque cursor). For MVP, we use a simple numeric offset.
     // If cursor is invalid, treat as 0.
-    const offset = params.cursor ? Number.parseInt(params.cursor, 10) : 0
-    const start = Number.isFinite(offset) && offset > 0 ? offset : 0
+    const offset =
+      params.cursor === null || params.cursor === undefined
+        ? 0
+        : Math.trunc(Number(params.cursor));
+    const start = Number.isFinite(offset) && offset > 0 ? offset : 0;
 
-    const PAGE_SIZE = 50
-    const page = filtered.slice(start, start + PAGE_SIZE)
+    const PAGE_SIZE = 50;
+    const page = filtered.slice(start, start + PAGE_SIZE);
 
-    const sessions: SessionInfo[] = page.map(s => ({
-      sessionId: s.sessionId,
+    const sessions: SessionInfo[] = page.map((s) => ({
       cwd: s.cwd,
+      sessionId: s.sessionId,
       title: s.title,
       updatedAt: s.updatedAt,
-      ...(s.preview && s.previewRole ? { _meta: { magPiAcp: { preview: s.preview, previewRole: s.previewRole } } } : {})
-    }))
+      ...(s.preview !== null && s.previewRole !== null
+        ? {
+            _meta: {
+              magPiAcp: { preview: s.preview, previewRole: s.previewRole },
+            },
+          }
+        : {}),
+    }));
 
-    const nextCursor = start + PAGE_SIZE < filtered.length ? String(start + PAGE_SIZE) : null
+    const nextCursor =
+      start + PAGE_SIZE < filtered.length ? String(start + PAGE_SIZE) : null;
 
-    return { sessions, nextCursor }
+    return { nextCursor, sessions };
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    if (!isAbsolute(params.cwd)) {
-      throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`)
+    if (!path.isAbsolute(params.cwd)) {
+      throw RequestError.invalidParams(
+        `cwd must be an absolute path: ${params.cwd}`
+      );
     }
 
-    const liveSession = this.sessions.maybeGet(params.sessionId)
-    const stored = findPiSession(params.sessionId)
-    if (!stored) {
-      throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`)
+    const liveSession = this.sessions.maybeGet(params.sessionId);
+    const stored = findPiSession(params.sessionId);
+    if (stored === null) {
+      throw RequestError.invalidParams(
+        `Unknown sessionId: ${params.sessionId}`
+      );
     }
-
-    this.lastSessionCwd = stored.cwd
+    this.lastSessionCwd = stored.cwd;
 
     const session = await this.restoreSession(params.sessionId, {
-      mcpServers: params.mcpServers
-    })
-    const proc = session.proc
+      mcpServers: params.mcpServers,
+    });
+    const { proc } = session;
+    this.sessions.closeAllExcept?.(session.sessionId);
 
-    // Keep only one live Pi subprocess within an ACP connection.
-    // (Tests sometimes stub out `this.sessions`, so guard the call.)
-    ;(this.sessions as any).closeAllExcept?.(session.sessionId)
-
-    // Replay the full active branch; Pi's RPC context omits messages removed by compaction.
-    // Keep the live Pi leaf because unsummarized tree navigation is not persisted until
-    // the next entry is appended.
-    const activeMessages = activeSessionMessages(
+    const liveTree =
+      liveSession === undefined ? undefined : await proc.getTree();
+    const messages = await loadMessages(
+      proc,
       stored.sessionFile,
-      liveSession ? (await proc.getTree()).leafId : undefined
-    )
-    const data = activeMessages.length ? undefined : ((await proc.getMessages()) as any)
-    const messages = activeMessages.length
-      ? activeMessages.map(entry => entry.message)
-      : Array.isArray(data?.messages)
-        ? data.messages
-        : []
-    let todoPlan: ReturnType<typeof todoResultToPlanEntries>
-    const restoredToolArgs = new Map<string, unknown>()
-    for (const message of messages) {
-      if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue
-      for (const block of message.content) {
-        if (block?.type === 'toolCall' && typeof block.id === 'string') {
-          restoredToolArgs.set(block.id, block.arguments)
-        }
-      }
-    }
-
-    for (const m of messages) {
-      const role = String(m?.role ?? '')
-
-      if (role === 'branchSummary') {
-        const text = normalizePiMessageText(m?.content)
-        if (text) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text }
-            },
-            _meta: { [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true }
-          })
-        }
-        continue
-      }
-
-      if (role === 'user') {
-        const text = normalizePiMessageText(m?.content)
-        if (text) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'user_message_chunk',
-              content: { type: 'text', text }
-            }
-          })
-        }
-      }
-
-      if (role === 'assistant') {
-        const text = normalizePiAssistantText(m?.content)
-        if (text) {
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'agent_message_chunk',
-              content: { type: 'text', text }
-            }
-          })
-        }
-      }
-
-      if (role === 'toolResult') {
-        const toolName = String((m as any)?.toolName ?? 'tool')
-        if (toolName === 'todo') todoPlan = todoResultToPlanEntries(m) ?? todoPlan
-        const toolCallId = String((m as any)?.toolCallId ?? crypto.randomUUID())
-        const rawInput = (m as any)?.args ?? restoredToolArgs.get(toolCallId) ?? null
-        const isError = Boolean((m as any)?.isError)
-        const isBash = isBashTool(toolName)
-
-        if (isBash) {
-          const text = bashResultText(m)
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'tool_call',
-              toolCallId,
-              title: bashCommand(rawInput) ?? bashCommand(m) ?? toolName,
-              kind: 'execute',
-              status: 'completed',
-              content: bashTerminalContent(toolCallId),
-              _meta: bashTerminalInfoMeta(toolCallId, session.cwd)
-            }
-          })
-
-          await this.conn.sessionUpdate({
-            sessionId: session.sessionId,
-            update: {
-              sessionUpdate: 'tool_call_update',
-              toolCallId,
-              status: isError ? 'failed' : 'completed',
-              _meta: {
-                ...(text ? bashTerminalOutputMeta(toolCallId, text) : {}),
-                ...bashTerminalExitMeta(toolCallId, bashExitCode(m, isError))
-              }
-            }
-          })
-          continue
-        }
-
-        // Create a synthetic ACP tool call to render historic tool usage.
-        const locations = toToolCallLocations(rawInput, session.cwd)
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'tool_call',
-            toolCallId,
-            title: toolName,
-            kind: toolName === 'read' ? 'read' : toolName === 'write' || toolName === 'edit' ? 'edit' : 'other',
-            status: 'completed',
-            rawInput,
-            rawOutput: m,
-            ...(locations ? { locations } : {})
-          }
-        })
-
-        const text = toolResultToText(m)
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'tool_call_update',
-            toolCallId,
-            status: isError ? 'failed' : 'completed',
-            content: text ? [{ type: 'content', content: { type: 'text', text } }] : null,
-            rawOutput: m
-          }
-        })
-      }
-    }
-
-    if (todoPlan) {
+      liveTree?.leafId
+    );
+    const todoPlan = await replayMessages(
+      this.conn,
+      session,
+      messages,
+      restoredToolArguments(messages)
+    );
+    if (todoPlan !== undefined) {
       await this.conn.sessionUpdate({
         sessionId: session.sessionId,
-        update: { sessionUpdate: 'plan', entries: todoPlan }
-      })
+        update: { entries: todoPlan, sessionUpdate: "plan" },
+      });
     }
 
-    const { configOptions, models, modes } = await getSessionConfiguration(proc)
-
-    const response = {
-      configOptions,
-      models,
-      modes
-    }
-
-    // Advertise slash commands after the response so the client knows the session exists.
-    setTimeout(() => {
-      void (async () => {
-        let commands: AvailableCommand[] = []
-        try {
-          commands = toAvailableCommandsFromPiGetCommands(await proc.getCommands())
-        } catch {
-          // Adapter commands remain available if Pi command discovery fails.
-        }
-
-        await this.conn.sessionUpdate({
-          sessionId: session.sessionId,
-          update: {
-            sessionUpdate: 'available_commands_update',
-            availableCommands: mergeCommands(commands, builtinAvailableCommands())
-          }
-        })
-      })()
-    }, 0)
-
-    return response
+    const { configOptions, models, modes } =
+      await getSessionConfiguration(proc);
+    const response = { configOptions, models, modes };
+    advertiseCommands(this.conn, session.sessionId, proc);
+    return response;
   }
 
-  async unstable_setSessionModel(params: { sessionId: string; modelId: string }): Promise<void> {
-    const session = await this.restoreSession(params.sessionId)
-    await setSessionModel(session.proc, params.modelId)
-    await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc)
+  async unstable_setSessionModel(params: {
+    sessionId: string;
+    modelId: string;
+  }): Promise<void> {
+    const session = await this.restoreSession(params.sessionId);
+    await setSessionModel(session.proc, params.modelId);
+    await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc);
   }
 
-  async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
-    const session = await this.restoreSession(params.sessionId)
+  async setSessionMode(
+    params: SetSessionModeRequest
+  ): Promise<SetSessionModeResponse> {
+    const session = await this.restoreSession(params.sessionId);
 
-    const mode = String(params.modeId)
+    const mode = params.modeId;
     if (!isThinkingLevel(mode)) {
-      throw RequestError.invalidParams(`Unknown modeId: ${mode}`)
+      throw RequestError.invalidParams(`Unknown modeId: ${mode}`);
     }
 
-    await session.proc.setThinkingLevel(mode)
+    await session.proc.setThinkingLevel(mode);
 
     // Let the client know the current mode changed (keeps the dropdown in sync).
     void this.conn.sessionUpdate({
       sessionId: session.sessionId,
       update: {
-        sessionUpdate: 'current_mode_update',
-        currentModeId: mode
-      }
-    })
+        currentModeId: mode,
+        sessionUpdate: "current_mode_update",
+      },
+    });
 
-    await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc)
+    await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc);
 
-    return {}
+    return {};
   }
 
-  async setSessionConfigOption(params: SetSessionConfigOptionRequest): Promise<SetSessionConfigOptionResponse> {
-    const session = await this.restoreSession(params.sessionId)
-    const configId = String(params.configId)
+  async setSessionConfigOption(
+    params: SetSessionConfigOptionRequest
+  ): Promise<SetSessionConfigOptionResponse> {
+    const session = await this.restoreSession(params.sessionId);
+    const { configId } = params;
 
-    if (typeof params.value !== 'string') {
-      throw RequestError.invalidParams(`Expected string value for config option: ${configId}`)
+    if (typeof params.value !== "string") {
+      throw RequestError.invalidParams(
+        `Expected string value for config option: ${configId}`
+      );
     }
 
     if (configId === MODEL_CONFIG_ID) {
-      await setSessionModel(session.proc, params.value)
+      await setSessionModel(session.proc, params.value);
     } else if (configId === ROLE_CONFIG_ID) {
-      const role = getRoles().find(role => role.id === params.value)
-      if (!role) throw RequestError.invalidParams(`Unknown role: ${params.value}`)
+      const selectedRole = getRoles().find(
+        (candidate) => candidate.id === params.value
+      );
+      if (selectedRole === undefined) {
+        throw RequestError.invalidParams(`Unknown role: ${params.value}`);
+      }
 
-      await setSessionModel(session.proc, role.model)
-      await session.proc.setThinkingLevel(role.thinkingLevel)
+      await setSessionModel(session.proc, selectedRole.model);
+      await session.proc.setThinkingLevel(selectedRole.thinkingLevel);
 
       void this.conn.sessionUpdate({
         sessionId: session.sessionId,
         update: {
-          sessionUpdate: 'current_mode_update',
-          currentModeId: role.thinkingLevel
-        }
-      })
+          currentModeId: selectedRole.thinkingLevel,
+          sessionUpdate: "current_mode_update",
+        },
+      });
     } else if (configId === THOUGHT_LEVEL_CONFIG_ID) {
       if (!isThinkingLevel(params.value)) {
-        throw RequestError.invalidParams(`Unknown thinking level: ${params.value}`)
+        throw RequestError.invalidParams(
+          `Unknown thinking level: ${params.value}`
+        );
       }
 
-      await session.proc.setThinkingLevel(params.value)
+      await session.proc.setThinkingLevel(params.value);
 
       void this.conn.sessionUpdate({
         sessionId: session.sessionId,
         update: {
-          sessionUpdate: 'current_mode_update',
-          currentModeId: params.value
-        }
-      })
+          currentModeId: params.value,
+          sessionUpdate: "current_mode_update",
+        },
+      });
     } else {
-      throw RequestError.invalidParams(`Unknown config option: ${configId}`)
+      throw RequestError.invalidParams(`Unknown config option: ${configId}`);
     }
 
-    const configOptions = await emitConfigOptionsUpdate(this.conn, session.sessionId, session.proc)
-    return { configOptions }
+    const configOptions = await emitConfigOptionsUpdate(
+      this.conn,
+      session.sessionId,
+      session.proc
+    );
+    return { configOptions };
   }
-}
-
-function isThinkingLevel(x: string): x is ThinkingLevel {
-  return x === 'off' || x === 'minimal' || x === 'low' || x === 'medium' || x === 'high' || x === 'xhigh' || x === 'max'
-}
-
-async function getThinkingState(
-  proc: PiRpcProcess,
-  pre?: { state?: any | null }
-): Promise<{
-  availableModes: Array<{
-    id: string
-    name: string
-    description?: string | null
-  }>
-  currentModeId: string
-}> {
-  // Ask pi for current thinking level.
-  let current: ThinkingLevel = 'medium'
-
-  const state =
-    pre?.state ??
-    (await (async () => {
-      try {
-        return (await proc.getState()) as any
-      } catch {
-        return null
-      }
-    })())
-
-  const tl = typeof state?.thinkingLevel === 'string' ? state.thinkingLevel : null
-  if (tl && isThinkingLevel(tl)) current = tl
-
-  const available: ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-
-  return {
-    currentModeId: current,
-    availableModes: available.map(id => ({
-      id,
-      name: `Thinking: ${id}`,
-      description: null
-    }))
-  }
-}
-
-async function getSessionConfiguration(
-  proc: PiRpcProcess,
-  pre?: { state?: any | null; availableModels?: any | null }
-): Promise<{
-  configOptions: SessionConfigOption[]
-  models: {
-    availableModels: AdvertisedModel[]
-    currentModelId: string
-  } | null
-  modes: {
-    availableModes: Array<{
-      id: string
-      name: string
-      description?: string | null
-    }>
-    currentModeId: string
-  }
-}> {
-  const [models, modes] = await Promise.all([getModelState(proc, pre), getThinkingState(proc, { state: pre?.state })])
-
-  return {
-    configOptions: buildConfigOptions({ models, modes, roles: getRoles() }),
-    models,
-    modes
-  }
-}
-
-function buildConfigOptions(state: {
-  models: {
-    availableModels: AdvertisedModel[]
-    currentModelId: string
-  } | null
-  roles: PiRole[]
-  modes: {
-    availableModes: Array<{
-      id: string
-      name: string
-      description?: string | null
-    }>
-    currentModeId: string
-  }
-}): SessionConfigOption[] {
-  const configOptions: SessionConfigOption[] = [
-    {
-      type: 'select',
-      id: THOUGHT_LEVEL_CONFIG_ID,
-      category: 'thought_level',
-      name: 'Thinking',
-      description: 'Set the reasoning effort for this session',
-      currentValue: state.modes.currentModeId,
-      options: state.modes.availableModes.map(mode => ({
-        value: mode.id,
-        name: mode.name,
-        description: mode.description ?? null
-      }))
-    }
-  ]
-
-  if (state.models?.availableModels.length) {
-    configOptions.unshift({
-      type: 'select',
-      id: MODEL_CONFIG_ID,
-      category: 'model',
-      name: 'Model',
-      description: 'Select the model for this session',
-      currentValue: state.models.currentModelId,
-      options: state.models.availableModels.map(model => ({
-        value: model.modelId,
-        name: model.name,
-        description: model.description ?? null
-      }))
-    })
-  }
-
-  if (state.roles.length) {
-    const currentRole = state.roles.find(
-      role => role.model === state.models?.currentModelId && role.thinkingLevel === state.modes.currentModeId
-    )
-    configOptions.unshift({
-      type: 'select',
-      id: ROLE_CONFIG_ID,
-      category: 'mode',
-      name: 'Role',
-      description: 'Switch model and thinking level together',
-      currentValue: currentRole?.id ?? '',
-      options: state.roles.map(role => ({
-        value: role.id,
-        name: role.id,
-        description: `${role.model} · Thinking: ${role.thinkingLevel}`
-      }))
-    })
-  }
-
-  return configOptions
-}
-
-async function getModelState(
-  proc: PiRpcProcess,
-  pre?: { state?: any | null; availableModels?: any | null }
-): Promise<{
-  availableModels: AdvertisedModel[]
-  currentModelId: string
-} | null> {
-  // Ask pi for available models.
-  let availableModels: AdvertisedModel[] = []
-
-  const data =
-    pre?.availableModels ??
-    (await (async () => {
-      try {
-        return (await proc.getAvailableModels()) as any
-      } catch {
-        return null
-      }
-    })())
-
-  const models: any[] = Array.isArray(data?.models) ? data.models : []
-  availableModels = models
-    .map(m => {
-      const provider = String(m?.provider ?? '').trim()
-      const id = String(m?.id ?? '').trim()
-      if (!provider || !id) return null
-
-      const name = String(m?.name ?? id)
-      return {
-        modelId: `${provider}/${id}`,
-        name: `${provider}/${name}`,
-        description: null
-      } satisfies AdvertisedModel
-    })
-    .filter(Boolean) as AdvertisedModel[]
-
-  // Ask pi what model is currently active.
-  let currentModelId: string | null = null
-
-  const state =
-    pre?.state ??
-    (await (async () => {
-      try {
-        return (await proc.getState()) as any
-      } catch {
-        return null
-      }
-    })())
-
-  const model = state?.model
-  if (model && typeof model === 'object') {
-    const provider = String((model as any).provider ?? '').trim()
-    const id = String((model as any).id ?? '').trim()
-    if (provider && id) currentModelId = `${provider}/${id}`
-  }
-
-  if (!availableModels.length && !currentModelId) return null
-
-  // Fallback if current model is unknown: use first in list.
-  if (!currentModelId) currentModelId = availableModels[0]?.modelId ?? 'default'
-
-  return {
-    availableModels,
-    currentModelId: currentModelId ?? availableModels[0]?.modelId ?? 'default'
-  }
-}
-
-async function emitConfigOptionsUpdate(
-  conn: AgentSideConnection,
-  sessionId: string,
-  proc: PiRpcProcess
-): Promise<SessionConfigOption[]> {
-  const { configOptions } = await getSessionConfiguration(proc)
-
-  await conn.sessionUpdate({
-    sessionId,
-    update: {
-      sessionUpdate: 'config_option_update',
-      configOptions
-    }
-  })
-
-  return configOptions
-}
-
-async function setSessionModel(proc: PiRpcProcess, requestedModelId: string): Promise<void> {
-  // Accept either:
-  //  - "provider/model" (preferred, matches how we advertise)
-  //  - "model" (fallback, resolve via available models)
-  let provider: string | null = null
-  let modelId: string | null = null
-
-  if (requestedModelId.includes('/')) {
-    const [candidateProvider, ...rest] = requestedModelId.split('/')
-    provider = candidateProvider
-    modelId = rest.join('/')
-  } else {
-    modelId = requestedModelId
-  }
-
-  if (!provider) {
-    const data = (await proc.getAvailableModels()) as any
-    const models: any[] = Array.isArray(data?.models) ? data.models : []
-    const found = models.find(m => String(m?.id) === modelId)
-    if (found) {
-      provider = String(found.provider)
-      modelId = String(found.id)
-    }
-  }
-
-  if (!provider || !modelId) {
-    throw RequestError.invalidParams(`Unknown modelId: ${requestedModelId}`)
-  }
-
-  await proc.setModel(provider, modelId)
-}
-
-function normalizeGeneratedTitle(output: string): string | null {
-  const line = output
-    .trim()
-    .split(/\r?\n/)
-    .find(Boolean)
-    ?.replace(/^#+\s*/, '')
-    .replace(/^title:\s*/i, '')
-    .replace(/^["'`]+|["'`.,:;!?]+$/g, '')
-    .trim()
-  if (!line) return null
-
-  return line.split(/\s+/).slice(0, 6).join(' ').slice(0, 200).trim() || null
-}
-
-export async function generateThreadTitle(params: {
-  cwd: string
-  model: string
-  user: string
-}): Promise<string | null> {
-  const prompt = [
-    'Create a concise 2-6 word title for this conversation.',
-    'Return only the title, without quotes or punctuation.',
-    '',
-    `User: ${params.user.slice(0, 4000)}`
-  ].join('\n')
-
-  return await new Promise(resolve => {
-    const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND)
-    const child = execFile(
-      command,
-      [
-        '--print',
-        '--no-session',
-        '--no-tools',
-        '--no-extensions',
-        '--no-skills',
-        '--no-prompt-templates',
-        '--no-context-files',
-        '--no-themes',
-        '--model',
-        params.model,
-        '--thinking',
-        'off',
-        '--',
-        prompt
-      ],
-      {
-        cwd: params.cwd,
-        encoding: 'utf8',
-        timeout: 15_000,
-        maxBuffer: 16_384,
-        shell: shouldUseShellForPiCommand(command)
-      },
-      (error, stdout) => resolve(error ? null : normalizeGeneratedTitle(stdout))
-    )
-    child.stdin?.end()
-  })
-}
-
-function isSemver(v: string): boolean {
-  return /^\d+\.\d+\.\d+(?:[-+].+)?$/.test(v)
-}
-
-function compareSemver(a: string, b: string): number {
-  // Very small comparator for x.y.z (ignores pre-release/build beyond making them "not greater" unless base differs)
-  const pa = a
-    .split(/[.-]/)
-    .slice(0, 3)
-    .map(n => Number(n))
-  const pb = b
-    .split(/[.-]/)
-    .slice(0, 3)
-    .map(n => Number(n))
-  for (let i = 0; i < 3; i++) {
-    const da = pa[i] ?? 0
-    const db = pb[i] ?? 0
-    if (da > db) return 1
-    if (da < db) return -1
-  }
-  return 0
-}
-
-function installedPiVersion(): string {
-  const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND)
-  const result = spawnSync(command, ['--version'], {
-    encoding: 'utf-8',
-    shell: shouldUseShellForPiCommand(command)
-  })
-  return (String(result.stdout ?? '').trim() || String(result.stderr ?? '').trim()).replace(/^v/i, '')
-}
-
-function buildUpdateNotice(): string | null {
-  // Best-effort update check against npm registry.
-  // Important: keep it fast to not slow down session/new.
-  try {
-    const installed = installedPiVersion()
-
-    if (!installed || !isSemver(installed)) return null
-
-    const latestRes = spawnSync('npm', ['view', '@earendil-works/pi-coding-agent', 'version'], {
-      encoding: 'utf-8',
-      timeout: 800
-    })
-    const latest = String(latestRes.stdout ?? '')
-      .trim()
-      .replace(/^v/i, '')
-
-    if (!latest || !isSemver(latest)) return null
-    if (compareSemver(latest, installed) <= 0) return null
-
-    return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @earendil-works/pi-coding-agent\``
-  } catch {
-    return null
-  }
-}
-
-function buildStartupInfo(opts: { updateNotice: string | null }): string {
-  let piVersionText = 'pi'
-  try {
-    const installed = installedPiVersion()
-    if (installed) piVersionText = `pi v${installed}`
-  } catch {
-    // The message still works when pi does not report a version.
-  }
-
-  const lines = [`MagPi v${pkg.version ?? '0.0.0'}`, piVersionText, 'collect shiny things']
-
-  if (opts.updateNotice) lines.push('', '---', opts.updateNotice)
-
-  return lines.join('\n').trim() + '\n'
-}
-
-function readNearestPackageJson(metaUrl: string): {
-  name?: string
-  version?: string
-} {
-  try {
-    let dir = dirname(fileURLToPath(metaUrl))
-
-    // Walk upwards a few levels to find the nearest package.json
-    for (let i = 0; i < 6; i++) {
-      const p = join(dir, 'package.json')
-      if (existsSync(p)) {
-        const json = JSON.parse(readFileSync(p, 'utf-8')) as any
-        return { name: json?.name, version: json?.version }
-      }
-      dir = dirname(dir)
-    }
-  } catch {
-    // ignore
-  }
-  return { name: 'magpi-acp', version: '0.0.0' }
 }

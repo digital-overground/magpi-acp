@@ -41,12 +41,12 @@ Therefore:
 
 The required Pi operations are:
 
-| RPC operation   | Native behavior                                                                                                                                    |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clone`         | Creates a new session from the current leaf and rebinds that RPC process to the child session.                                                     |
+| RPC operation | Native behavior |
+| --- | --- |
+| `clone` | Creates a new session from the current leaf and rebinds that RPC process to the child session. |
 | `fork(entryId)` | Accepts a user-message entry ID, creates a child session before that message, returns the selected text, and rebinds the RPC process to the child. |
-| `get_entries`   | Returns all session entries plus the authoritative current `leafId`; `since` returns entries appended after a known entry.                         |
-| `get_tree`      | Returns the complete tree, but is not needed for the fork path.                                                                                    |
+| `get_entries` | Returns all session entries plus the authoritative current `leafId`; `since` returns entries appended after a known entry. |
+| `get_tree` | Returns the complete tree, but is not needed for the fork path. |
 
 Direct RPC `fork` rejects assistant-message IDs. Pi's internal runtime supports `position: "at"`, but the RPC command does not expose that option. Removing assistant fork points is what allows MagPi to delete its custom fork bridge without changing Pi upstream.
 
@@ -87,12 +87,12 @@ The actual session creation is already performed by Pi, but identity resolution,
 
 ### Behavior matrix
 
-| Request                                        | MagPi action                                         | Result                              |
-| ---------------------------------------------- | ---------------------------------------------------- | ----------------------------------- |
-| ACP fork with no MagPi target metadata         | Temporary worker calls Pi `clone`                    | New session at the current leaf     |
+| Request | MagPi action | Result |
+| --- | --- | --- |
+| ACP fork with no MagPi target metadata | Temporary worker calls Pi `clone` | New session at the current leaf |
 | ACP fork with a mapped live Mischief user UUID | Resolve UUID in memory, then call Pi `fork(entryId)` | New session before that user prompt |
-| ACP fork with a replayed Pi user entry ID      | Validate the ID, then call Pi `fork(entryId)`        | New session before that user prompt |
-| ACP fork targeting an assistant or unknown ID  | Reject as invalid parameters                         | Source remains unchanged            |
+| ACP fork with a replayed Pi user entry ID | Validate the ID, then call Pi `fork(entryId)` | New session before that user prompt |
+| ACP fork targeting an assistant or unknown ID | Reject as invalid parameters | Source remains unchanged |
 
 ### One transient identity map
 
@@ -101,7 +101,7 @@ Keep Mischief's optimistic local transcript IDs. Do not add another durable iden
 Each live `MagPiAcpSession` owns an in-memory map:
 
 ```ts
-Map<clientMessageId, piUserEntryId>
+Map<clientMessageId, piUserEntryId>;
 ```
 
 Populate it for a normal Pi prompt as follows:
@@ -340,32 +340,32 @@ Add the no-metadata fork flow to the smallest existing smoke script rather than 
 
 ### MagPi ACP
 
-| File                                           | Purpose                                                                 |
-| ---------------------------------------------- | ----------------------------------------------------------------------- |
-| `src/pi-rpc/process.ts`                        | Add native `clone`/`get_entries`; remove marker/custom-fork methods     |
-| `src/pi-rpc/tree-command.ts`                   | Remove marker and custom-fork constants                                 |
-| `src/pi-extension/tree.ts`                     | Retain tree/rewind only                                                 |
-| `src/acp/session.ts`                           | Capture transient ID mappings and dispatch clone/direct fork            |
-| `src/acp/agent.ts`                             | Standard no-metadata clone, targeted user validation, RPC-backed replay |
-| `src/acp/pi-session-tree.ts`                   | Pure active-path selection from native entries and leaf                 |
-| `test/helpers/fakes.ts`                        | Model clone, entries, and settled events                                |
-| `test/unit/session-fork.test.ts`               | Clone and targeted native worker behavior                               |
-| `test/unit/pi-session-tree.test.ts`            | Leaf-based active path                                                  |
-| `test/unit/pi-tree-extension.test.ts`          | Tree/rewind scope after fork code removal                               |
-| `test/unit/builtin-commands.test.ts`           | ACP fork routing and target validation                                  |
-| `test/component/session-list-and-load.test.ts` | Native-entry replay IDs                                                 |
-| `scripts/smoke-acp.mjs`                        | Metadata-free standard fork flow                                        |
-| `README.md`                                    | Pi floor and user-message-only targeted semantics                       |
+| File | Purpose |
+| --- | --- |
+| `src/pi-rpc/process.ts` | Add native `clone`/`get_entries`; remove marker/custom-fork methods |
+| `src/pi-rpc/tree-command.ts` | Remove marker and custom-fork constants |
+| `src/pi-extension/tree.ts` | Retain tree/rewind only |
+| `src/acp/session.ts` | Capture transient ID mappings and dispatch clone/direct fork |
+| `src/acp/agent.ts` | Standard no-metadata clone, targeted user validation, RPC-backed replay |
+| `src/acp/pi-session-tree.ts` | Pure active-path selection from native entries and leaf |
+| `test/helpers/fakes.ts` | Model clone, entries, and settled events |
+| `test/unit/session-fork.test.ts` | Clone and targeted native worker behavior |
+| `test/unit/pi-session-tree.test.ts` | Leaf-based active path |
+| `test/unit/pi-tree-extension.test.ts` | Tree/rewind scope after fork code removal |
+| `test/unit/builtin-commands.test.ts` | ACP fork routing and target validation |
+| `test/component/session-list-and-load.test.ts` | Native-entry replay IDs |
+| `scripts/smoke-acp.mjs` | Metadata-free standard fork flow |
+| `README.md` | Pi floor and user-message-only targeted semantics |
 
 ### Mischief
 
-| File                                                                    | Purpose                                   |
-| ----------------------------------------------------------------------- | ----------------------------------------- |
-| `src/threads/threads.ts`                                                | Enforce user-only fork targets            |
-| `src/threads/threads.test.ts`                                           | User fork success and assistant rejection |
-| `src/webview/threads/detail/composer/controls/history-control.tsx`      | Hide fork on assistant rows               |
-| `src/webview/threads/detail/composer/controls/footer-controls.test.tsx` | Verify visible actions by message kind    |
-| `CONTEXT.md` / `README.md` if wording exists                            | Record Pi-native user-message semantics   |
+| File | Purpose |
+| --- | --- |
+| `src/threads/threads.ts` | Enforce user-only fork targets |
+| `src/threads/threads.test.ts` | User fork success and assistant rejection |
+| `src/webview/threads/detail/composer/controls/history-control.tsx` | Hide fork on assistant rows |
+| `src/webview/threads/detail/composer/controls/footer-controls.test.tsx` | Verify visible actions by message kind |
+| `CONTEXT.md` / `README.md` if wording exists | Record Pi-native user-message semantics |
 
 Avoid changing persistence schemas, adding dependencies, or introducing new modules unless the existing files cannot hold the behavior cleanly.
 

@@ -1,77 +1,111 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 
-function isObject(x: unknown): x is Record<string, unknown> {
-  return Boolean(x) && typeof x === 'object' && !Array.isArray(x)
-}
+import { isRecord } from "../unknown.js";
 
-function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...a }
+const isObject = isRecord;
+
+const deepMerge = (
+  a: Record<string, unknown>,
+  b: Record<string, unknown>
+): Record<string, unknown> => {
+  const out: Record<string, unknown> = { ...a };
   for (const [k, v] of Object.entries(b)) {
-    const av = out[k]
-    if (isObject(av) && isObject(v)) out[k] = deepMerge(av, v)
-    else out[k] = v
+    const av = out[k];
+    out[k] = isObject(av) && isObject(v) ? deepMerge(av, v) : v;
   }
-  return out
-}
+  return out;
+};
 
-function readJsonFile(path: string): Record<string, unknown> {
+const readJsonFile = (filePath: string): Record<string, unknown> => {
   try {
-    if (!existsSync(path)) return {}
-    const raw = readFileSync(path, 'utf-8')
-    const data = JSON.parse(raw)
-    return isObject(data) ? data : {}
+    if (!existsSync(filePath)) {
+      return {};
+    }
+    const raw = readFileSync(filePath, "utf-8");
+    const data: unknown = JSON.parse(raw);
+    return isObject(data) ? data : {};
   } catch {
-    return {}
+    return {};
   }
+};
+
+export const getAgentDir = (): string => {
+  const configured = process.env.PI_CODING_AGENT_DIR;
+  return configured === undefined
+    ? path.join(homedir(), ".pi", "agent")
+    : path.resolve(configured);
+};
+
+const getMergedSettings = (cwd: string): Record<string, unknown> => {
+  const globalSettingsPath = path.join(getAgentDir(), "settings.json");
+  const projectSettingsPath = path.resolve(cwd, ".pi", "settings.json");
+
+  const global = readJsonFile(globalSettingsPath);
+  const project = readJsonFile(projectSettingsPath);
+  return deepMerge(global, project);
+};
+
+export interface PiRole {
+  id: string;
+  model: string;
+  thinkingLevel:
+    | "off"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | "max";
 }
 
-function getMergedSettings(cwd: string): Record<string, unknown> {
-  const globalSettingsPath = join(getAgentDir(), 'settings.json')
-  const projectSettingsPath = resolve(cwd, '.pi', 'settings.json')
+const isThinkingLevel = (value: string): value is PiRole["thinkingLevel"] =>
+  value === "off" ||
+  value === "minimal" ||
+  value === "low" ||
+  value === "medium" ||
+  value === "high" ||
+  value === "xhigh" ||
+  value === "max";
 
-  const global = readJsonFile(globalSettingsPath)
-  const project = readJsonFile(projectSettingsPath)
-  return deepMerge(global, project)
-}
-
-export function getAgentDir(): string {
-  return process.env.PI_CODING_AGENT_DIR ? resolve(process.env.PI_CODING_AGENT_DIR) : join(homedir(), '.pi', 'agent')
-}
-
-export type PiRole = {
-  id: string
-  model: string
-  thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-}
-
-export function getRoles(): PiRole[] {
-  const roles = readJsonFile(join(getAgentDir(), 'roles.json'))
-  const thinkingLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-
+export const getRoles = (): PiRole[] => {
+  const roles = readJsonFile(path.join(getAgentDir(), "roles.json"));
   return Object.entries(roles).flatMap(([id, value]) => {
-    if (!isObject(value)) return []
-    const model = typeof value.model === 'string' ? value.model.trim() : ''
-    const thinkingLevel = typeof value.thinkingLevel === 'string' ? value.thinkingLevel : ''
-    if (!id || !model || !thinkingLevels.has(thinkingLevel)) return []
-    return [{ id, model, thinkingLevel } as PiRole]
-  })
-}
+    if (!isObject(value)) {
+      return [];
+    }
+    const model = typeof value.model === "string" ? value.model.trim() : "";
+    const thinkingLevel =
+      typeof value.thinkingLevel === "string" ? value.thinkingLevel : "";
+    if (
+      id.length === 0 ||
+      model.length === 0 ||
+      !isThinkingLevel(thinkingLevel)
+    ) {
+      return [];
+    }
+    return [{ id, model, thinkingLevel }];
+  });
+};
 
 /**
  * Mirror pi's quietStartup setting: if true, pi suppresses the verbose startup prelude.
  * We use it to decide whether to synthesize + emit our own "startup info" message.
  */
-export function getQuietStartup(cwd: string): boolean {
-  const merged = getMergedSettings(cwd)
+export const getQuietStartup = (cwd: string): boolean => {
+  const merged = getMergedSettings(cwd);
 
-  const direct = merged.quietStartup
-  if (typeof direct === 'boolean') return direct
+  const direct = merged.quietStartup;
+  if (typeof direct === "boolean") {
+    return direct;
+  }
 
   // Back-compat: some versions used quietStart
-  const legacy = (merged as any).quietStart
-  if (typeof legacy === 'boolean') return legacy
+  const legacy = merged.quietStart;
+  if (typeof legacy === "boolean") {
+    return legacy;
+  }
 
-  return false
-}
+  return false;
+};

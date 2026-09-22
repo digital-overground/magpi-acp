@@ -1,370 +1,463 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { MagPiAcpAgent, generateThreadTitle } from '../../src/acp/agent.js'
+import assert from "node:assert/strict";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
+
+import { MagPiAcpAgent, generateThreadTitle } from "../../src/acp/agent.js";
 import {
   MAGPI_ACP_FORK_ENTRY_ID_META,
   MAGPI_ACP_FORK_MESSAGES_METHOD,
   MAGPI_ACP_NAVIGATE_TREE_METHOD,
-  MAGPI_ACP_TREE_METHOD
-} from '../../src/pi-rpc/tree-command.js'
-import { FakeAgentSideConnection, FakePiRpcProcess, asAgentConn } from '../helpers/fakes.js'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+  MAGPI_ACP_TREE_METHOD,
+} from "../../src/pi-rpc/tree-command.js";
+import type { TreeNavigationOptions } from "../../src/pi-rpc/tree-command.js";
+import {
+  FakeAgentSideConnection,
+  FakePiRpcProcess,
+  asAgentConn,
+  asRecord,
+  replaceProperty,
+} from "../helpers/fakes.js";
 
 class FakeSessions {
-  forkParams: unknown
+  forkParams: unknown;
+  private readonly session: unknown;
 
-  constructor(private readonly session: any) {}
-  maybeGet(_id: string) {
-    return this.session
+  constructor(session: unknown) {
+    this.session = session;
   }
-  get(_id: string) {
-    return this.session
+
+  maybeGet(_id: string): unknown {
+    return this.session;
   }
-  async fork(params: unknown) {
-    this.forkParams = params
-    return 'forked-session'
+
+  get(_id: string): unknown {
+    return this.session;
+  }
+
+  async fork(params: unknown): Promise<string> {
+    await Promise.resolve();
+    this.forkParams = params;
+    return "forked-session";
   }
 }
 
-test('MagPiAcpAgent: /steering is handled adapter-side', async () => {
-  const conn = new FakeAgentSideConnection()
-  const proc = new FakePiRpcProcess() as any
-  proc.getState = async () => ({ steeringMode: 'one-at-a-time' })
+const setSessions = (agent: MagPiAcpAgent, sessions: FakeSessions): void => {
+  replaceProperty(agent, "sessions", sessions);
+};
 
-  const agent = new MagPiAcpAgent(asAgentConn(conn))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+void test("MagPiAcpAgent: /steering is handled adapter-side", async () => {
+  const conn = new FakeAgentSideConnection();
+  const proc = new FakePiRpcProcess();
+  proc.getState = () => ({ steeringMode: "one-at-a-time" });
 
-  const res = await agent.prompt({
-    sessionId: 's1',
-    prompt: [{ type: 'text', text: '/steering' }]
-  } as any)
-
-  assert.equal(res.stopReason, 'end_turn')
-  assert.equal(proc.prompts.length, 0)
-  const last = conn.updates.at(-1)
-  assert.match((last as any).update.content.text, /Steering mode: one-at-a-time/)
-})
-
-test('MagPiAcpAgent: /name sets session display name adapter-side', async () => {
-  const conn = new FakeAgentSideConnection()
-  const proc = new FakePiRpcProcess() as any
-
-  let setTo: string | null = null
-  proc.setSessionName = async (name: string) => {
-    setTo = name
-  }
-
-  const agent = new MagPiAcpAgent(asAgentConn(conn))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+  const agent = new MagPiAcpAgent(asAgentConn(conn));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
   const res = await agent.prompt({
-    sessionId: 's1',
-    prompt: [{ type: 'text', text: '/name My Session' }]
-  } as any)
+    prompt: [{ text: "/steering", type: "text" }],
+    sessionId: "s1",
+  });
 
-  assert.equal(res.stopReason, 'end_turn')
-  assert.equal(proc.prompts.length, 0)
-  assert.equal(setTo, 'My Session')
-  const info = conn.updates.find(u => (u as any).update?.sessionUpdate === 'session_info_update')
-  assert.equal((info as any)?.update?.title, 'My Session')
+  assert.equal(res.stopReason, "end_turn");
+  assert.equal(proc.prompts.length, 0);
+  const content = asRecord(asRecord(conn.updates.at(-1)?.update).content);
+  assert.match(String(content.text), /Steering mode: one-at-a-time/u);
+});
 
-  const last = conn.updates.at(-1)
-  assert.match((last as any).update.content.text, /Session name set: My Session/)
-})
+void test("MagPiAcpAgent: /name sets session display name adapter-side", async () => {
+  const conn = new FakeAgentSideConnection();
+  const proc = new FakePiRpcProcess();
 
-test('MagPiAcpAgent: automatically names a thread from its first user message', async () => {
-  const conn = new FakeAgentSideConnection()
-  const proc = new FakePiRpcProcess() as any
-  let sessionName: string | undefined
-  let titleRequest: any
-  let titleApplied!: () => void
-  const applied = new Promise<void>(resolve => {
-    titleApplied = resolve
-  })
+  let setTo: string | null = null;
+  proc.setSessionName = (name: string) => {
+    setTo = name;
+  };
 
-  proc.getState = async () => ({
+  const agent = new MagPiAcpAgent(asAgentConn(conn));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
+
+  const res = await agent.prompt({
+    prompt: [{ text: "/name My Session", type: "text" }],
+    sessionId: "s1",
+  });
+
+  assert.equal(res.stopReason, "end_turn");
+  assert.equal(proc.prompts.length, 0);
+  assert.equal(setTo, "My Session");
+  const info = conn.updates.find(
+    (message) => message.update.sessionUpdate === "session_info_update"
+  );
+  assert.equal(asRecord(info?.update).title, "My Session");
+
+  const content = asRecord(asRecord(conn.updates.at(-1)?.update).content);
+  assert.match(String(content.text), /Session name set: My Session/u);
+});
+
+void test("MagPiAcpAgent: automatically names a thread from its first user message", async () => {
+  const conn = new FakeAgentSideConnection();
+  const proc = new FakePiRpcProcess();
+  let sessionName: string | undefined;
+  let titleRequest: unknown;
+  proc.getState = () => ({
+    model: { id: "gpt-5.6-sol", provider: "openai-codex" },
     sessionName,
-    model: { provider: 'openai-codex', id: 'gpt-5.6-sol' }
-  })
-  proc.getMessages = async () => ({ messages: [] })
-  proc.setSessionName = async (name: string) => {
-    sessionName = name
-    titleApplied()
-  }
+  });
+  proc.getMessages = () => ({ messages: [] });
+  proc.setSessionName = (name: string) => {
+    sessionName = name;
+  };
 
   const session = {
-    sessionId: 's1',
     cwd: process.cwd(),
     proc,
-    prompt: async () => 'end_turn',
-    wasCancelRequested: () => false
-  }
-  const agent = new MagPiAcpAgent(asAgentConn(conn))
-  ;(agent as any).sessions = new FakeSessions(session) as any
-  ;(agent as any).generateTitle = async (request: any) => {
-    titleRequest = request
-    return 'Fix Login Cache Bug'
-  }
+    prompt: async (): Promise<"end_turn"> => {
+      await Promise.resolve();
+      return "end_turn";
+    },
+    sessionId: "s1",
+    wasCancelRequested: () => false,
+  };
+  const agent = new MagPiAcpAgent(asAgentConn(conn));
+  setSessions(agent, new FakeSessions(session));
+  replaceProperty(agent, "generateTitle", async (request: unknown) => {
+    await Promise.resolve();
+    titleRequest = request;
+    return "Fix Login Cache Bug";
+  });
 
   await agent.prompt({
-    sessionId: 's1',
-    prompt: [{ type: 'text', text: 'fix the login caching bug' }]
-  } as any)
-  await applied
-  await new Promise(resolve => setImmediate(resolve))
+    prompt: [{ text: "fix the login caching bug", type: "text" }],
+    sessionId: "s1",
+  });
+  await waitForImmediate();
 
   assert.deepEqual(titleRequest, {
     cwd: process.cwd(),
-    model: 'openai-codex/gpt-5.6-sol',
-    user: 'fix the login caching bug'
-  })
-  assert.equal(sessionName, 'Fix Login Cache Bug')
-  const info = conn.updates.find(update => (update as any).update?.sessionUpdate === 'session_info_update')
-  assert.equal((info as any)?.update?.title, 'Fix Login Cache Bug')
-})
+    model: "openai-codex/gpt-5.6-sol",
+    user: "fix the login caching bug",
+  });
+  assert.equal(sessionName, "Fix Login Cache Bug");
+  const info = conn.updates.find(
+    (message) => message.update.sessionUpdate === "session_info_update"
+  );
+  assert.equal(asRecord(info?.update).title, "Fix Login Cache Bug");
+});
 
-test('generateThreadTitle runs a hardened one-shot Pi call', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'magpi-title-'))
-  const command = join(dir, 'fake-pi')
-  const argsPath = join(dir, 'args.json')
-  const previousCommand = process.env.MAGPI_ACP_PI_COMMAND
-  const previousArgsPath = process.env.MAGPI_TEST_ARGS_PATH
+void test("generateThreadTitle runs a hardened one-shot Pi call", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "magpi-title-"));
+  const command = path.join(directory, "fake-pi");
+  const argsPath = path.join(directory, "args.json");
+  const previousCommand = process.env.MAGPI_ACP_PI_COMMAND;
+  const previousArgsPath = process.env.MAGPI_TEST_ARGS_PATH;
   writeFileSync(
     command,
-    '#!/usr/bin/env node\nrequire("node:fs").writeFileSync(process.env.MAGPI_TEST_ARGS_PATH, JSON.stringify(process.argv.slice(2)))\nprocess.stdin.resume()\nprocess.stdin.on("end", () => console.log("One Two Three Four Five Six Seven"))\n'
-  )
-  chmodSync(command, 0o755)
-  process.env.MAGPI_ACP_PI_COMMAND = command
-  process.env.MAGPI_TEST_ARGS_PATH = argsPath
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(process.env.MAGPI_TEST_ARGS_PATH, JSON.stringify(process.argv.slice(2)))
+console.log("One Two Three Four Five Six Seven")
+`
+  );
+  chmodSync(command, 0o755);
+  process.env.MAGPI_ACP_PI_COMMAND = command;
+  process.env.MAGPI_TEST_ARGS_PATH = argsPath;
 
   try {
     assert.equal(
-      await generateThreadTitle({ cwd: dir, model: 'test/model', user: 'test prompt' }),
-      'One Two Three Four Five Six'
-    )
-    const args = JSON.parse(readFileSync(argsPath, 'utf8')) as string[]
+      await generateThreadTitle({
+        cwd: directory,
+        model: "test/model",
+        user: "test prompt",
+      }),
+      "One Two Three Four Five Six"
+    );
+    const parsed: unknown = JSON.parse(readFileSync(argsPath, "utf-8"));
+    assert.ok(
+      Array.isArray(parsed) &&
+        parsed.every((argument) => typeof argument === "string")
+    );
+    const args: string[] = parsed;
     for (const flag of [
-      '--no-tools',
-      '--no-extensions',
-      '--no-skills',
-      '--no-prompt-templates',
-      '--no-context-files',
-      '--no-themes'
+      "--no-tools",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-context-files",
+      "--no-themes",
     ]) {
-      assert.ok(args.includes(flag), `missing ${flag}`)
+      assert.ok(args.includes(flag), `missing ${flag}`);
     }
-    assert.deepEqual(args.slice(args.indexOf('--model'), args.indexOf('--model') + 2), ['--model', 'test/model'])
-    assert.deepEqual(args.slice(args.indexOf('--thinking'), args.indexOf('--thinking') + 2), ['--thinking', 'off'])
+    const modelIndex = args.indexOf("--model");
+    const thinkingIndex = args.indexOf("--thinking");
+    assert.deepEqual(args.slice(modelIndex, modelIndex + 2), [
+      "--model",
+      "test/model",
+    ]);
+    assert.deepEqual(args.slice(thinkingIndex, thinkingIndex + 2), [
+      "--thinking",
+      "off",
+    ]);
   } finally {
-    if (previousCommand === undefined) delete process.env.MAGPI_ACP_PI_COMMAND
-    else process.env.MAGPI_ACP_PI_COMMAND = previousCommand
-    if (previousArgsPath === undefined) delete process.env.MAGPI_TEST_ARGS_PATH
-    else process.env.MAGPI_TEST_ARGS_PATH = previousArgsPath
-    rmSync(dir, { recursive: true, force: true })
+    if (previousCommand === undefined) {
+      delete process.env.MAGPI_ACP_PI_COMMAND;
+    } else {
+      process.env.MAGPI_ACP_PI_COMMAND = previousCommand;
+    }
+    if (previousArgsPath === undefined) {
+      delete process.env.MAGPI_TEST_ARGS_PATH;
+    } else {
+      process.env.MAGPI_TEST_ARGS_PATH = previousArgsPath;
+    }
+    rmSync(directory, { force: true, recursive: true });
   }
-})
+});
 
-test('MagPiAcpAgent: standard fork clones the current Pi leaf without metadata', async () => {
-  const conn = new FakeAgentSideConnection()
-  const proc = new FakePiRpcProcess()
-  proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl' })
-  const sessions = new FakeSessions({ sessionId: 's1', proc })
-  const agent = new MagPiAcpAgent(asAgentConn(conn))
-  ;(agent as any).sessions = sessions as any
+void test("MagPiAcpAgent: standard fork clones the current Pi leaf without metadata", async () => {
+  const conn = new FakeAgentSideConnection();
+  const proc = new FakePiRpcProcess();
+  proc.getState = () => ({ sessionFile: "/sessions/source.jsonl" });
+  const sessions = new FakeSessions({ proc, sessionId: "s1" });
+  const agent = new MagPiAcpAgent(asAgentConn(conn));
+  setSessions(agent, sessions);
 
   const response = await agent.unstable_forkSession({
-    cwd: '/workspace',
+    cwd: "/workspace",
     mcpServers: [],
-    sessionId: 's1'
-  })
+    sessionId: "s1",
+  });
 
-  assert.deepEqual(response, { sessionId: 'forked-session' })
+  assert.deepEqual(response, { sessionId: "forked-session" });
   assert.deepEqual(sessions.forkParams, {
+    cwd: "/workspace",
     entryId: undefined,
-    cwd: '/workspace',
     piCommand: undefined,
-    sourceSessionFile: '/sessions/source.jsonl'
-  })
-})
+    sourceSessionFile: "/sessions/source.jsonl",
+  });
+});
 
-test('MagPiAcpAgent: targeted fork passes a native Pi entry ID', async () => {
-  const proc = new FakePiRpcProcess()
-  proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl' })
-  const sessions = new FakeSessions({ sessionId: 's1', proc })
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = sessions as any
+void test("MagPiAcpAgent: targeted fork passes a native Pi entry ID", async () => {
+  const proc = new FakePiRpcProcess();
+  proc.getState = () => ({ sessionFile: "/sessions/source.jsonl" });
+  const sessions = new FakeSessions({ proc, sessionId: "s1" });
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  setSessions(agent, sessions);
 
   await agent.unstable_forkSession({
-    _meta: { [MAGPI_ACP_FORK_ENTRY_ID_META]: 'pi-user-1' },
-    cwd: '/workspace',
+    _meta: { [MAGPI_ACP_FORK_ENTRY_ID_META]: "pi-user-1" },
+    cwd: "/workspace",
     mcpServers: [],
-    sessionId: 's1'
-  })
+    sessionId: "s1",
+  });
 
   assert.deepEqual(sessions.forkParams, {
-    entryId: 'pi-user-1',
-    cwd: '/workspace',
+    cwd: "/workspace",
+    entryId: "pi-user-1",
     piCommand: undefined,
-    sourceSessionFile: '/sessions/source.jsonl'
-  })
-})
+    sourceSessionFile: "/sessions/source.jsonl",
+  });
+});
 
-test('MagPiAcpAgent: fork picker returns Pi native fork messages unchanged', async () => {
-  const proc = new FakePiRpcProcess() as any
-  const messages = [{ entryId: 'pi-user-1', text: 'Fix login' }]
-  proc.getForkMessages = async () => messages
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+void test("MagPiAcpAgent: fork picker returns Pi native fork messages unchanged", async () => {
+  const proc = new FakePiRpcProcess();
+  const messages = [{ entryId: "pi-user-1", text: "Fix login" }];
+  proc.getForkMessages = () => messages;
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
-  assert.deepEqual(await agent.extMethod(MAGPI_ACP_FORK_MESSAGES_METHOD, { sessionId: 's1' }), { messages })
-})
+  assert.deepEqual(
+    await agent.extMethod(MAGPI_ACP_FORK_MESSAGES_METHOD, { sessionId: "s1" }),
+    { messages }
+  );
+});
 
-test('MagPiAcpAgent: tree picker returns Pi native tree and leaf unchanged', async () => {
-  const proc = new FakePiRpcProcess() as any
-  const tree = [{ entry: { id: 'pi-user-1', type: 'message' }, children: [] }]
-  proc.getTree = async () => ({ tree, leafId: 'pi-user-1' })
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+void test("MagPiAcpAgent: tree picker returns Pi native tree and leaf unchanged", async () => {
+  const proc = new FakePiRpcProcess();
+  const tree = [{ children: [], entry: { id: "pi-user-1", type: "message" } }];
+  proc.getTree = () => ({ leafId: "pi-user-1", tree });
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
-  assert.deepEqual(await agent.extMethod(MAGPI_ACP_TREE_METHOD, { sessionId: 's1' }), {
-    tree,
-    leafId: 'pi-user-1'
-  })
-})
+  assert.deepEqual(
+    await agent.extMethod(MAGPI_ACP_TREE_METHOD, { sessionId: "s1" }),
+    {
+      leafId: "pi-user-1",
+      tree,
+    }
+  );
+});
 
-test('MagPiAcpAgent: tree navigation passes summary choices and keeps the session identity', async () => {
-  const proc = new FakePiRpcProcess() as any
-  const navigations: Array<{ entryId: string; options: unknown }> = []
+void test("MagPiAcpAgent: tree navigation passes summary choices and keeps the session identity", async () => {
+  const proc = new FakePiRpcProcess();
+  const navigations: {
+    entryId: string;
+    options: TreeNavigationOptions | undefined;
+  }[] = [];
   const tree = [
     {
+      children: [],
       entry: {
-        id: 'pi-user-1',
-        type: 'message',
-        message: { role: 'user', content: 'Fix login' }
+        id: "pi-user-1",
+        message: { content: "Fix login", role: "user" },
+        type: "message",
       },
-      children: []
-    }
-  ]
-  proc.getTree = async () => ({ tree, leafId: navigations.length ? 'pi-user-1' : 'pi-assistant-2' })
-  proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl', sessionId: 's1' })
-  proc.navigateTree = async (entryId: string, options: unknown) => navigations.push({ entryId, options })
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
-  const customInstructions = 'Focus on auth paths.\nKeep exact errors.'
-  const choices = [
-    { params: {}, options: { summarize: false, customInstructions: undefined } },
-    { params: { summarize: false }, options: { summarize: false, customInstructions: undefined } },
-    { params: { summarize: true }, options: { summarize: true, customInstructions: undefined } },
+    },
+  ];
+  proc.getTree = () => ({
+    leafId: navigations.length > 0 ? "pi-user-1" : "pi-assistant-2",
+    tree,
+  });
+  proc.getState = () => ({
+    sessionFile: "/sessions/source.jsonl",
+    sessionId: "s1",
+  });
+  proc.navigateTree = (entryId, options) => {
+    navigations.push({ entryId, options });
+  };
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
+  const customInstructions = "Focus on auth paths.\nKeep exact errors.";
+  const choices: {
+    params: Record<string, unknown>;
+    options: TreeNavigationOptions;
+  }[] = [
     {
-      params: { summarize: true, customInstructions },
-      options: { summarize: true, customInstructions }
-    }
-  ]
+      options: { customInstructions: undefined, summarize: false },
+      params: {},
+    },
+    {
+      options: { customInstructions: undefined, summarize: false },
+      params: { summarize: false },
+    },
+    {
+      options: { customInstructions: undefined, summarize: true },
+      params: { summarize: true },
+    },
+    {
+      options: { customInstructions, summarize: true },
+      params: { customInstructions, summarize: true },
+    },
+  ];
 
-  for (const choice of choices) {
-    assert.deepEqual(
-      await agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-        sessionId: 's1',
-        entryId: 'pi-user-1',
-        ...choice.params
-      }),
-      { leafId: 'pi-user-1', draft: 'Fix login' }
+  const responses = await Promise.all(
+    choices.map(
+      async (choice) =>
+        await agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
+          entryId: "pi-user-1",
+          sessionId: "s1",
+          ...choice.params,
+        })
     )
+  );
+  for (const response of responses) {
+    assert.deepEqual(response, { draft: "Fix login", leafId: "pi-user-1" });
   }
   assert.deepEqual(
     navigations,
-    choices.map(({ options }) => ({ entryId: 'pi-user-1', options }))
-  )
-})
+    choices.map(({ options }) => ({ entryId: "pi-user-1", options }))
+  );
+});
 
-test('MagPiAcpAgent: tree navigation rejects malformed summary options before invoking Pi', async () => {
-  const proc = new FakePiRpcProcess() as any
-  let piCalls = 0
-  proc.getTree = async () => {
-    piCalls += 1
-    return { tree: [], leafId: null }
-  }
-  proc.getState = async () => {
-    piCalls += 1
-    return {}
-  }
-  proc.navigateTree = async () => {
-    piCalls += 1
-  }
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+void test("MagPiAcpAgent: tree navigation rejects malformed summary options before invoking Pi", async () => {
+  const proc = new FakePiRpcProcess();
+  let piCalls = 0;
+  proc.getTree = () => {
+    piCalls += 1;
+    return { leafId: null, tree: [] };
+  };
+  proc.getState = () => {
+    piCalls += 1;
+    return {};
+  };
+  proc.navigateTree = () => {
+    piCalls += 1;
+  };
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
-  for (const options of [{ summarize: 'true' }, { customInstructions: ['focus'] }]) {
-    await assert.rejects(
-      agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-        sessionId: 's1',
-        entryId: 'pi-user-1',
-        ...options
-      }),
-      { code: -32602 }
+  await Promise.all(
+    [{ summarize: "true" }, { customInstructions: ["focus"] }].map(
+      async (options) => {
+        await assert.rejects(
+          agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
+            entryId: "pi-user-1",
+            sessionId: "s1",
+            ...options,
+          }),
+          { code: -32_602 }
+        );
+      }
     )
-  }
-  assert.equal(piCalls, 0)
-})
+  );
+  assert.equal(piCalls, 0);
+});
 
-test('MagPiAcpAgent: tree navigation surfaces summary failure without changing the leaf', async () => {
-  const proc = new FakePiRpcProcess() as any
+void test("MagPiAcpAgent: tree navigation surfaces summary failure without changing the leaf", async () => {
+  const proc = new FakePiRpcProcess();
+  const activeLeaf = "pi-assistant-2";
   const tree = [
     {
+      children: [],
       entry: {
-        id: 'pi-user-1',
-        type: 'message',
-        message: { role: 'user', content: 'Fix login' }
+        id: "pi-user-1",
+        message: { content: "Fix login", role: "user" },
+        type: "message",
       },
-      children: []
-    }
-  ]
-  const activeLeaf = 'pi-assistant-2'
-  let attempts = 0
-  proc.getTree = async () => ({ tree, leafId: activeLeaf })
-  proc.getState = async () => ({ sessionFile: '/sessions/source.jsonl', sessionId: 's1' })
-  proc.navigateTree = async () => {
-    attempts += 1
-    throw new Error('branch summary failed')
-  }
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+    },
+  ];
+  let attempts = 0;
+  proc.getTree = () => ({ leafId: activeLeaf, tree });
+  proc.getState = () => ({
+    sessionFile: "/sessions/source.jsonl",
+    sessionId: "s1",
+  });
+  proc.navigateTree = () => {
+    attempts += 1;
+    throw new Error("branch summary failed");
+  };
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
   await assert.rejects(
     agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-      sessionId: 's1',
-      entryId: 'pi-user-1',
-      summarize: true
+      entryId: "pi-user-1",
+      sessionId: "s1",
+      summarize: true,
     }),
-    /branch summary failed/
-  )
-  assert.equal(attempts, 1)
-  assert.equal((await proc.getTree()).leafId, activeLeaf)
-})
+    /branch summary failed/u
+  );
+  assert.equal(attempts, 1);
+  const currentTree = await proc.process.getTree();
+  assert.equal(currentTree.leafId, activeLeaf);
+});
 
-test('MagPiAcpAgent: tree navigation rejects non-message and stale entry IDs', async () => {
-  const proc = new FakePiRpcProcess() as any
-  proc.getTree = async () => ({
-    tree: [{ entry: { id: 'compaction-1', type: 'compaction' }, children: [] }],
-    leafId: 'compaction-1'
-  })
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()))
-  ;(agent as any).sessions = new FakeSessions({ sessionId: 's1', proc }) as any
+void test("MagPiAcpAgent: tree navigation rejects non-message and stale entry IDs", async () => {
+  const proc = new FakePiRpcProcess();
+  proc.getTree = () => ({
+    leafId: "compaction-1",
+    tree: [{ children: [], entry: { id: "compaction-1", type: "compaction" } }],
+  });
+  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
+  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
 
   await assert.rejects(
     agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-      sessionId: 's1',
-      entryId: 'compaction-1'
+      entryId: "compaction-1",
+      sessionId: "s1",
     }),
-    { code: -32602 }
-  )
+    { code: -32_602 }
+  );
   await assert.rejects(
     agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-      sessionId: 's1',
-      entryId: 'foreign-entry'
+      entryId: "foreign-entry",
+      sessionId: "s1",
     }),
-    { code: -32602 }
-  )
-})
+    { code: -32_602 }
+  );
+});

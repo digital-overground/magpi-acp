@@ -1,17 +1,26 @@
-export function normalizePiMessageText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content
-    .map((c: any) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : ''))
-    .filter(Boolean)
-    .join('')
-}
+import { asRecord } from "../../unknown.js";
 
-export function normalizePiAssistantText(content: unknown): string {
+const textFromBlock = (block: unknown): string => {
+  const contentBlock = asRecord(block);
+  return contentBlock?.type === "text" && typeof contentBlock.text === "string"
+    ? contentBlock.text
+    : "";
+};
+
+export const normalizePiMessageText = (content: unknown): string => {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.map(textFromBlock).filter(Boolean).join("");
+};
+
+export const normalizePiAssistantText = (content: unknown): string => {
   // Assistant content is typically an array of blocks; only replay text blocks for MVP.
-  if (!Array.isArray(content)) return ''
-  return content
-    .map((c: any) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : ''))
-    .filter(Boolean)
-    .join('')
-}
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content.map(textFromBlock).filter(Boolean).join("");
+};

@@ -1,93 +1,122 @@
-import test from 'node:test'
-import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { MagPiAcpAgent } from '../../src/acp/agent.js'
-import { FakeAgentSideConnection, asAgentConn } from '../helpers/fakes.js'
+import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import { MagPiAcpAgent } from "../../src/acp/agent.js";
+import {
+  FakeAgentSideConnection,
+  asAgentConn,
+  asRecord,
+  replaceProperty,
+} from "../helpers/fakes.js";
 
 class FakeSessions {
-  closeCalls: string[] = []
+  private readonly session: Record<string, unknown>;
+  closeCalls: string[] = [];
 
-  constructor(private readonly session: any) {}
+  constructor(session: Record<string, unknown>) {
+    this.session = session;
+  }
 
   async create() {
-    return this.session
+    await Promise.resolve();
+    return this.session;
   }
 
   close(sessionId: string) {
-    this.closeCalls.push(sessionId)
+    this.closeCalls.push(sessionId);
   }
 }
 
-test('MagPiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth error after spawn', async () => {
-  const conn = new FakeAgentSideConnection()
-  const root = mkdtempSync(join(tmpdir(), 'magpi-acp-runtime-auth-'))
-  const sessionFile = join(root, 'sessions', 'failed.jsonl')
+void test("MagPiAcpAgent: newSession returns AUTH_REQUIRED when pi reports an auth error after spawn", async () => {
+  const conn = new FakeAgentSideConnection();
+  const root = mkdtempSync(path.join(tmpdir(), "magpi-acp-runtime-auth-"));
+  const sessionFile = path.join(root, "sessions", "failed.jsonl");
 
-  mkdirSync(join(root, 'sessions'), { recursive: true })
+  mkdirSync(path.join(root, "sessions"), { recursive: true });
   writeFileSync(
     sessionFile,
-    JSON.stringify({
-      type: 'session',
+    `${JSON.stringify({
+      cwd: process.cwd(),
+      id: "s-auth",
+      timestamp: "2026-05-07T00:00:00.000Z",
+      type: "session",
       version: 3,
-      id: 's-auth',
-      timestamp: '2026-05-07T00:00:00.000Z',
-      cwd: process.cwd()
-    }) + '\n',
-    'utf-8'
-  )
+    })}\n`,
+    "utf-8"
+  );
 
   const session = {
-    sessionId: 's-auth',
     cwd: process.cwd(),
     proc: {
       async getAvailableModels() {
-        throw new Error('Authentication required: missing key')
+        await Promise.resolve();
+        throw new Error("Authentication required: missing key");
       },
       async getState() {
-        return { thinkingLevel: 'medium', model: null, sessionFile }
-      }
-    }
-  }
+        await Promise.resolve();
+        return {
+          model: null,
+          sessionFile,
+          thinkingLevel: "medium",
+        };
+      },
+    },
+    sessionId: "s-auth",
+  };
 
-  const sessions = new FakeSessions(session)
-  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
-  ;(agent as any).sessions = sessions as any
+  const sessions = new FakeSessions(session);
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+  replaceProperty(agent, "sessions", sessions);
 
   await assert.rejects(
-    () => agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any),
-    (e: any) => e?.code === -32000
-  )
+    async () => {
+      await agent.newSession({ cwd: process.cwd(), mcpServers: [] });
+    },
+    (error: unknown) => asRecord(error).code === -32_000
+  );
 
-  assert.deepEqual(sessions.closeCalls, ['s-auth'])
-  assert.equal(existsSync(sessionFile), false)
-})
+  assert.deepEqual(sessions.closeCalls, ["s-auth"]);
+  assert.equal(existsSync(sessionFile), false);
+});
 
-test('MagPiAcpAgent: newSession returns Internal error on non-auth model probe failures after spawn', async () => {
-  const conn = new FakeAgentSideConnection()
+void test("MagPiAcpAgent: newSession returns Internal error on non-auth model probe failures after spawn", async () => {
+  const conn = new FakeAgentSideConnection();
 
   const session = {
-    sessionId: 's-internal',
     cwd: process.cwd(),
     proc: {
       async getAvailableModels() {
-        throw new Error('socket hang up')
+        await Promise.resolve();
+        throw new Error("socket hang up");
       },
       async getState() {
-        return { thinkingLevel: 'medium', model: null }
-      }
-    }
-  }
+        await Promise.resolve();
+        return { model: null, thinkingLevel: "medium" };
+      },
+    },
+    sessionId: "s-internal",
+  };
 
-  const sessions = new FakeSessions(session)
-  const agent = new MagPiAcpAgent(asAgentConn(conn), {} as any)
-  ;(agent as any).sessions = sessions as any
+  const sessions = new FakeSessions(session);
+  const agent = new MagPiAcpAgent(asAgentConn(conn), {});
+  replaceProperty(agent, "sessions", sessions);
 
   await assert.rejects(
-    () => agent.newSession({ cwd: process.cwd(), mcpServers: [] } as any),
-    (e: any) => e?.code === -32603 && String(e?.message ?? '').includes('socket hang up')
-  )
+    async () => {
+      await agent.newSession({ cwd: process.cwd(), mcpServers: [] });
+    },
+    (error: unknown) => {
+      const details = asRecord(error);
+      return (
+        details.code === -32_603 &&
+        typeof details.message === "string" &&
+        details.message.includes("socket hang up")
+      );
+    }
+  );
 
-  assert.deepEqual(sessions.closeCalls, ['s-internal'])
-})
+  assert.deepEqual(sessions.closeCalls, ["s-internal"]);
+});
