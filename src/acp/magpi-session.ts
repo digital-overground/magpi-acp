@@ -28,6 +28,7 @@ import {
   bashTerminalOutputMeta,
   isBashTool,
 } from "./translate/bash.js";
+import { normalizePiMessageText } from "./translate/pi-messages.js";
 import {
   todoResultToPlanEntries,
   toolResultToText,
@@ -52,6 +53,14 @@ interface Deferred<Value> {
 interface PendingTurn {
   resolve: (reason: StopReason) => void;
   reject: (err: unknown) => void;
+}
+
+interface MessageIdentityTurn {
+  cursor?: string;
+  valid: boolean;
+  started: { role: "user" | "assistant"; id: string }[];
+  ended: { role: "user" | "assistant"; id: string }[];
+  activeAssistantId?: string;
 }
 
 interface QueuedTurn {
@@ -483,6 +492,43 @@ export class MagPiAcpSession {
   // Current in-flight turn (if any). Additional prompts are queued.
   private pendingTurn: PendingTurn | null = null;
   private readonly turnQueue: QueuedTurn[] = [];
+  private identityTurn?: MessageIdentityTurn;
+  private readonly messageIdsByEntry = new Map<string, string>();
+  private readonly replayedEntryIds = new Set<string>();
+  private fallbackTargetsDisabled = false;
+
+  entryIdForMessage(messageId: string): string | undefined {
+    let match: string | undefined;
+    for (const [entryId, id] of this.messageIdsByEntry) {
+      if (id === messageId) {
+        if (match !== undefined) {
+          return undefined;
+        }
+        match = entryId;
+      }
+    }
+    if (
+      !this.fallbackTargetsDisabled &&
+      this.replayedEntryIds.has(messageId) &&
+      !this.messageIdsByEntry.has(messageId)
+    ) {
+      if (match !== undefined) {
+        return undefined;
+      }
+      match = messageId;
+    }
+    return match;
+  }
+
+  isIdle(): boolean {
+    return this.pendingTurn === null && this.turnQueue.length === 0;
+  }
+
+  replayMessageId(entryId: string): string {
+    const messageId = this.messageIdsByEntry.get(entryId) ?? entryId;
+    this.replayedEntryIds.add(entryId);
+    return messageId;
+  }
   // Track tool call statuses and ensure they are monotonic (pending -> in_progress -> completed).
   // Some pi events can arrive out of order (e.g. late toolcall_* deltas after execution starts),
   // and clients may hide progress if we ever downgrade back to `pending`.
@@ -697,6 +743,7 @@ export class MagPiAcpSession {
     this.inAgentLoop = false;
 
     this.pendingTurn = { reject: t.reject, resolve: t.resolve };
+    this.identityTurn = { ended: [], started: [], valid: false };
 
     // Kick off pi, but completion is determined by pi events, not the RPC response.
     // Pi may emit multiple low-level runs; the full prompt ends at `agent_settled`.
@@ -705,6 +752,16 @@ export class MagPiAcpSession {
 
   private async runPrompt(turn: QueuedTurn): Promise<void> {
     try {
+      const identity = this.identityTurn;
+      try {
+        const snapshot = await this.proc.getEntries();
+        if (identity !== undefined) {
+          identity.cursor = snapshot.entries.at(-1)?.id;
+          identity.valid = true;
+        }
+      } catch {
+        // Identity lookup must not fail an otherwise successful turn.
+      }
       await this.proc.prompt(turn.message, turn.images);
     } catch (error) {
       await this.flushEmits();
@@ -716,6 +773,7 @@ export class MagPiAcpSession {
         this.pendingTurn?.resolve(reason);
       }
       this.pendingTurn = null;
+      this.identityTurn = undefined;
       this.inAgentLoop = false;
     }
   }
@@ -726,6 +784,9 @@ export class MagPiAcpSession {
     if (ame?.type === "text_delta" && typeof ame.delta === "string") {
       this.emit({
         content: { text: ame.delta, type: "text" } satisfies ContentBlock,
+        ...(this.identityTurn?.activeAssistantId === undefined
+          ? {}
+          : { messageId: this.identityTurn.activeAssistantId }),
         sessionUpdate: "agent_message_chunk",
       });
       return;
@@ -960,10 +1021,93 @@ export class MagPiAcpSession {
     this.cleanupToolCall(toolCallId);
   }
 
+  // Pi does not expose persisted entry IDs on message events; track only real roles.
+  // oxlint-disable-next-line complexity
+  private handleMessageIdentityEvent(ev: PiRpcEvent): void {
+    switch (ev.type) {
+      case "message_start": {
+        const message = asRecord(ev.message);
+        const role = message?.role;
+        const identity = this.identityTurn;
+        if (
+          identity !== undefined &&
+          (role === "user" || role === "assistant")
+        ) {
+          if (message === undefined) {
+            return;
+          }
+          const id = crypto.randomUUID();
+          identity.started.push({ id, role });
+          if (role === "assistant") {
+            identity.activeAssistantId = id;
+          } else {
+            const text = normalizePiMessageText(message.content);
+            if (text.length > 0) {
+              this.emit({
+                content: { text, type: "text" },
+                messageId: id,
+                sessionUpdate: "user_message_chunk",
+              });
+            }
+            if (Array.isArray(message.content)) {
+              for (const block of message.content) {
+                const image = asRecord(block);
+                if (
+                  image?.type === "image" &&
+                  typeof image.data === "string" &&
+                  typeof image.mimeType === "string"
+                ) {
+                  this.emit({
+                    content: {
+                      data: image.data,
+                      mimeType: image.mimeType,
+                      type: "image",
+                    },
+                    messageId: id,
+                    sessionUpdate: "user_message_chunk",
+                  });
+                }
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case "message_end": {
+        const role = asRecord(ev.message)?.role;
+        const identity = this.identityTurn;
+        if (
+          identity !== undefined &&
+          (role === "user" || role === "assistant")
+        ) {
+          const started = identity.started[identity.ended.length];
+          if (started?.role === role) {
+            identity.ended.push(started);
+          } else {
+            identity.valid = false;
+          }
+          if (role === "assistant") {
+            identity.activeAssistantId = undefined;
+          }
+        }
+        break;
+      }
+
+      default: {
+        break;
+      }
+    }
+  }
+
   private handlePiEvent(ev: PiRpcEvent) {
     const type = stringValue(ev.type);
-
     switch (type) {
+      case "message_start":
+      case "message_end": {
+        this.handleMessageIdentityEvent(ev);
+        break;
+      }
       case "message_update": {
         this.handleMessageUpdate(ev);
         break;
@@ -1072,6 +1216,43 @@ export class MagPiAcpSession {
   }
 
   private async settleAgent(): Promise<void> {
+    const identity = this.identityTurn;
+    if (
+      identity?.valid === true &&
+      identity.started.length === identity.ended.length
+    ) {
+      try {
+        const snapshot = await this.proc.getEntries(identity.cursor);
+        const entries = snapshot.entries.filter(
+          (entry) =>
+            entry.type === "message" &&
+            (entry.message?.role === "user" ||
+              entry.message?.role === "assistant")
+        );
+        if (
+          entries.length === identity.ended.length &&
+          new Set(entries.map((entry) => entry.id)).size === entries.length &&
+          entries.every(
+            (entry, index) =>
+              entry.message?.role === identity.ended[index]?.role
+          )
+        ) {
+          for (const [index, entry] of entries.entries()) {
+            const id = identity.ended[index]?.id;
+            if (id !== undefined) {
+              this.messageIdsByEntry.set(entry.id, id);
+            }
+          }
+        } else {
+          this.fallbackTargetsDisabled = true;
+        }
+      } catch {
+        this.fallbackTargetsDisabled = true;
+      }
+    } else if (identity !== undefined) {
+      this.fallbackTargetsDisabled = true;
+    }
+    this.identityTurn = undefined;
     await this.sendUsageUpdate();
     await this.flushEmits();
     const reason: StopReason = this.cancelRequested ? "cancelled" : "end_turn";

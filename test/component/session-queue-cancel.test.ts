@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { MagPiAcpSession } from "../../src/acp/session.js";
 import {
@@ -23,6 +24,7 @@ void test("MagPiAcpSession: cancel clears queued prompts", async () => {
   const first = session.prompt("one");
   const second = session.prompt("two");
   const third = session.prompt("three");
+  await delay(0);
 
   // first started, second+third queued
   assert.equal(proc.prompts.length, 1);

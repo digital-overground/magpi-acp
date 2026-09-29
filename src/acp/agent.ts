@@ -36,6 +36,7 @@ import type { PiSessionEntry, PiSessionTreeNode } from "../pi-rpc/process.js";
 import {
   MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY,
   MAGPI_ACP_FORK_ENTRY_ID_META,
+  MAGPI_ACP_FORK_MESSAGE_ID_META,
   MAGPI_ACP_FORK_MESSAGES_METHOD,
   MAGPI_ACP_FORK_PICKER_CAPABILITY,
   MAGPI_ACP_NAVIGATE_TREE_METHOD,
@@ -49,6 +50,7 @@ import { getAuthMethods } from "./auth.js";
 import type { AgentClientConnection } from "./connection.js";
 import { toAvailableCommandsFromPiGetCommands } from "./pi-commands.js";
 import { activeSessionMessages } from "./pi-session-tree.js";
+import type { ActiveSessionMessage } from "./pi-session-tree.js";
 import { listPiSessions, findPiSession } from "./pi-sessions.js";
 import { getQuietStartup, getRoles } from "./pi-settings.js";
 import type { PiRole } from "./pi-settings.js";
@@ -65,10 +67,7 @@ import {
   bashTerminalOutputMeta,
   isBashTool,
 } from "./translate/bash.js";
-import {
-  normalizePiAssistantText,
-  normalizePiMessageText,
-} from "./translate/pi-messages.js";
+import { normalizePiMessageText } from "./translate/pi-messages.js";
 import {
   todoResultToPlanEntries,
   toolResultToText,
@@ -147,6 +146,51 @@ const findTreeMessage = (
     }
   }
   return null;
+};
+
+const pathToLeaf = (
+  nodes: PiSessionTreeNode[],
+  leafId: string | null
+): string[] | null => {
+  for (const node of nodes) {
+    if (node.entry.id === leafId) {
+      return [node.entry.id];
+    }
+    const childPath = pathToLeaf(node.children, leafId);
+    if (childPath !== null) {
+      return [node.entry.id, ...childPath];
+    }
+  }
+  return null;
+};
+
+const resolveTranscriptTarget = (
+  session: MagPiAcpSession,
+  messageId: string,
+  tree: { tree: PiSessionTreeNode[]; leafId: string | null },
+  role?: "user"
+): string => {
+  if (!session.isIdle()) {
+    throw RequestError.invalidParams(
+      "Transcript actions require an idle session."
+    );
+  }
+  const entryId = session.entryIdForMessage(messageId);
+  if (entryId === undefined) {
+    throw RequestError.invalidParams(
+      "Transcript message identity unavailable."
+    );
+  }
+  if (
+    pathToLeaf(tree.tree, tree.leafId)?.includes(entryId) !== true ||
+    (role !== undefined &&
+      findTreeMessage(tree.tree, entryId)?.message?.role !== role)
+  ) {
+    throw RequestError.invalidParams(
+      "Transcript message is not an active Pi target."
+    );
+  }
+  return entryId;
 };
 
 const builtinAvailableCommands = (): AvailableCommand[] => [
@@ -624,12 +668,14 @@ const findChangelog = (): string | null => {
 const sendAgentText = async (
   conn: AgentClientConnection,
   sessionId: string,
-  text: string
+  text: string,
+  messageId?: string
 ): Promise<void> => {
   await conn.sessionUpdate({
     sessionId,
     update: {
       content: { text, type: "text" },
+      ...(messageId === undefined ? {} : { messageId }),
       sessionUpdate: "agent_message_chunk",
     },
   });
@@ -1013,29 +1059,73 @@ const restoredToolArguments = (messages: unknown[]): Map<string, unknown> => {
 const replayUserMessage = async (
   conn: AgentClientConnection,
   sessionId: string,
-  message: UnknownRecord
+  message: UnknownRecord,
+  messageId?: string
 ): Promise<void> => {
   const text = normalizePiMessageText(message.content);
-  if (text.length === 0) {
-    return;
+  if (text.length > 0) {
+    await conn.sessionUpdate({
+      sessionId,
+      update: {
+        content: { text, type: "text" },
+        ...(messageId === undefined ? {} : { messageId }),
+        sessionUpdate: "user_message_chunk",
+      },
+    });
   }
-  await conn.sessionUpdate({
-    sessionId,
-    update: {
-      content: { text, type: "text" },
-      sessionUpdate: "user_message_chunk",
-    },
-  });
+  if (Array.isArray(message.content)) {
+    for (const value of message.content) {
+      const block = asRecord(value);
+      if (
+        block?.type === "image" &&
+        typeof block.data === "string" &&
+        typeof block.mimeType === "string"
+      ) {
+        // oxlint-disable-next-line no-await-in-loop -- replay order must match Pi content order
+        await conn.sessionUpdate({
+          sessionId,
+          update: {
+            content: {
+              data: block.data,
+              mimeType: block.mimeType,
+              type: "image",
+            },
+            ...(messageId === undefined ? {} : { messageId }),
+            sessionUpdate: "user_message_chunk",
+          },
+        });
+      }
+    }
+  }
 };
 
 const replayAssistantMessage = async (
   conn: AgentClientConnection,
   sessionId: string,
-  message: UnknownRecord
+  message: UnknownRecord,
+  messageId?: string
 ): Promise<void> => {
-  const text = normalizePiAssistantText(message.content);
-  if (text) {
-    await sendAgentText(conn, sessionId, text);
+  if (!Array.isArray(message.content)) {
+    return;
+  }
+  for (const value of message.content) {
+    const block = asRecord(value);
+    if (typeof block?.text !== "string" || block.text.length === 0) {
+      continue;
+    }
+    if (block.type === "thinking") {
+      // oxlint-disable-next-line no-await-in-loop -- preserve persisted block order
+      await conn.sessionUpdate({
+        sessionId,
+        update: {
+          content: { text: block.text, type: "text" },
+          sessionUpdate: "agent_thought_chunk",
+        },
+      });
+    } else if (block.type === "text") {
+      // oxlint-disable-next-line no-await-in-loop -- preserve persisted block order
+      await sendAgentText(conn, sessionId, block.text, messageId);
+    }
   }
 };
 
@@ -1159,6 +1249,7 @@ const replayMessage = async (
   conn: AgentClientConnection,
   session: MagPiAcpSession,
   messageValue: unknown,
+  messageId: string | undefined,
   restoredArgs: Map<string, unknown>,
   todoPlan: TodoPlan
 ): Promise<TodoPlan> => {
@@ -1180,9 +1271,9 @@ const replayMessage = async (
       });
     }
   } else if (role === "user") {
-    await replayUserMessage(conn, session.sessionId, message);
+    await replayUserMessage(conn, session.sessionId, message, messageId);
   } else if (role === "assistant") {
-    await replayAssistantMessage(conn, session.sessionId, message);
+    await replayAssistantMessage(conn, session.sessionId, message, messageId);
   } else if (role === "toolResult") {
     return await replayToolResult(
       conn,
@@ -1198,7 +1289,7 @@ const replayMessage = async (
 const replayMessages = async (
   conn: AgentClientConnection,
   session: MagPiAcpSession,
-  messages: unknown[],
+  messages: (ActiveSessionMessage | { message: unknown })[],
   restoredArgs: Map<string, unknown>,
   index = 0,
   todoPlan?: TodoPlan
@@ -1210,7 +1301,8 @@ const replayMessages = async (
   const nextTodoPlan = await replayMessage(
     conn,
     session,
-    message,
+    message.message,
+    "id" in message ? session.replayMessageId(message.id) : undefined,
     restoredArgs,
     todoPlan
   );
@@ -1228,20 +1320,16 @@ const loadMessages = async (
   proc: PiRpcProcess,
   sessionFile: string,
   leafId?: string | null
-): Promise<unknown[]> => {
+): Promise<(ActiveSessionMessage | { message: unknown })[]> => {
   const activeMessages = activeSessionMessages(sessionFile, leafId);
   if (activeMessages.length > 0) {
-    return activeMessages.map((entry) => entry.message);
+    return activeMessages;
   }
   const messages = asRecord(await proc.getMessages())?.messages;
   if (!Array.isArray(messages)) {
     return [];
   }
-  const result: unknown[] = [];
-  for (const message of messages) {
-    result.push(message);
-  }
-  return result;
+  return (messages as unknown[]).map((message) => ({ message }));
 };
 
 const advertiseCommands = (
@@ -1291,6 +1379,21 @@ const treeNavigationOptions = (
     throw RequestError.invalidParams("customInstructions must be a string.");
   }
   return { customInstructions, summarize: summarize ?? false };
+};
+
+const navigationTarget = (
+  params: Record<string, unknown>
+): { id: string; isMessage: boolean } => {
+  const hasEntryId = Object.hasOwn(params, "entryId");
+  const hasMessageId = Object.hasOwn(params, "messageId");
+  if (hasEntryId === hasMessageId) {
+    throw RequestError.invalidParams("Provide either entryId or messageId.");
+  }
+  const id = hasMessageId ? params.messageId : params.entryId;
+  if (typeof id !== "string" || id.trim().length === 0) {
+    throw RequestError.invalidParams("Target ID must be a non-empty string.");
+  }
+  return { id, isMessage: hasMessageId };
 };
 
 const hasSessionName = (stateValue: unknown): boolean => {
@@ -1731,6 +1834,20 @@ export class MagPiAcpAgent implements ACPAgent {
     params: ForkSessionRequest
   ): Promise<ForkSessionResponse> {
     const rawEntryId = params._meta?.[MAGPI_ACP_FORK_ENTRY_ID_META];
+    const rawMessageId = params._meta?.[MAGPI_ACP_FORK_MESSAGE_ID_META];
+    if (rawEntryId !== undefined && rawMessageId !== undefined) {
+      throw RequestError.invalidParams(
+        "Choose either fork entry ID or message ID."
+      );
+    }
+    if (
+      rawMessageId !== undefined &&
+      (typeof rawMessageId !== "string" || rawMessageId.trim().length === 0)
+    ) {
+      throw RequestError.invalidParams(
+        "Fork message ID must be a non-empty string."
+      );
+    }
     if (
       rawEntryId !== undefined &&
       (typeof rawEntryId !== "string" || rawEntryId.trim().length === 0)
@@ -1739,8 +1856,12 @@ export class MagPiAcpAgent implements ACPAgent {
         "Fork entry ID must be a non-empty string."
       );
     }
-    const entryId = typeof rawEntryId === "string" ? rawEntryId : undefined;
+    let entryId = typeof rawEntryId === "string" ? rawEntryId : undefined;
     const source = await this.restoreSession(params.sessionId);
+    if (typeof rawMessageId === "string") {
+      const tree = await source.proc.getTree();
+      entryId = resolveTranscriptTarget(source, rawMessageId, tree, "user");
+    }
     const state = asRecord(await source.proc.getState());
     if (typeof state?.sessionFile !== "string") {
       throw RequestError.internalError(
@@ -1780,15 +1901,11 @@ export class MagPiAcpAgent implements ACPAgent {
     }
 
     if (navigationOptions !== null) {
-      const entryId =
-        typeof params.entryId === "string" && params.entryId.trim().length > 0
-          ? params.entryId
-          : null;
-      if (entryId === null) {
-        throw RequestError.invalidParams("entryId is required.");
-      }
-
+      const target = navigationTarget(params);
       const before = await session.proc.getTree();
+      const entryId = target.isMessage
+        ? resolveTranscriptTarget(session, target.id, before)
+        : target.id;
       const entry = findTreeMessage(before.tree, entryId);
       if (entry === null) {
         throw RequestError.invalidParams(
@@ -1905,7 +2022,7 @@ export class MagPiAcpAgent implements ACPAgent {
       this.conn,
       session,
       messages,
-      restoredToolArguments(messages)
+      restoredToolArguments(messages.map((entry) => entry.message))
     );
     if (todoPlan !== undefined) {
       await this.conn.sessionUpdate({

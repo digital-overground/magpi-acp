@@ -48,7 +48,7 @@ process.stdin.on('data', chunk => {
       id: command.id,
       command: command.type,
       success: true,
-      data: {}
+      data: command.type === 'get_entries' ? { entries: [{ id: 'bad', type: 'message' }], leafId: null } : {}
     }) + '\\n')
   }
 })
@@ -75,6 +75,7 @@ process.stdin.on('data', chunk => {
           : [];
       });
 
+      await assert.rejects(proc.getEntries(), /invalid get_entries entry/u);
       assert.equal(extensions.length, 2);
       const [treeExtension, askUserExtension] = extensions;
       assert.ok(treeExtension);

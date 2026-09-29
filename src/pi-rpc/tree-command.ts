@@ -2,6 +2,7 @@ export const MAGPI_ACP_NAVIGATE_TREE_COMMAND =
   "__magpi_acp_internal_navigate_tree";
 
 export const MAGPI_ACP_FORK_ENTRY_ID_META = "magpi-acp/fork-entry-id";
+export const MAGPI_ACP_FORK_MESSAGE_ID_META = "magpi-acp/fork-message-id";
 export const MAGPI_ACP_FORK_MESSAGES_METHOD =
   "_magpi-acp/session/fork-messages";
 export const MAGPI_ACP_TREE_METHOD = "_magpi-acp/session/tree";
