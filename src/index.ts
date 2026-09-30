@@ -4,11 +4,7 @@ import { agent, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 
 import { MagPiAcpAgent } from "./acp/agent.js";
 import { getPiCommand, shouldUseShellForPiCommand } from "./pi-rpc/command.js";
-import {
-  MAGPI_ACP_FORK_MESSAGES_METHOD,
-  MAGPI_ACP_NAVIGATE_TREE_METHOD,
-  MAGPI_ACP_TREE_METHOD,
-} from "./pi-rpc/tree-command.js";
+import { MAGPI_ACP_NAVIGATE_TREE_METHOD } from "./pi-rpc/tree-command.js";
 import { asRecord } from "./unknown.js";
 
 // Terminal Auth entrypoint. The ACP client launches the agent with `--terminal-login`.
@@ -127,17 +123,12 @@ app.onNotification(methods.agent.session.cancel, async ({ params }) => {
   await getAgent().cancel(params);
 });
 
-for (const method of [
-  MAGPI_ACP_FORK_MESSAGES_METHOD,
-  MAGPI_ACP_TREE_METHOD,
+app.onRequest(
   MAGPI_ACP_NAVIGATE_TREE_METHOD,
-]) {
-  app.onRequest(
-    method,
-    parseExtensionParams,
-    async ({ params }) => await getAgent().extMethod(method, params)
-  );
-}
+  parseExtensionParams,
+  async ({ params }) =>
+    await getAgent().extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, params)
+);
 
 const agentConnection = app.connect(stream);
 

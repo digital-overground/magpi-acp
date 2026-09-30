@@ -14,11 +14,9 @@
 | --- | --- | --- |
 | Transcript user row, Fork | `session/fork` with `_meta["magpi-acp/fork-message-id"]: messageId` | Resolve ACP ID to the exact **active** Pi user entry; Pi-native fork validation still applies. |
 | Transcript user/assistant row, Tree | `_magpi-acp/session/navigate-tree` with `messageId` and existing summary options | Resolve ACP ID to the exact active-branch Pi message; navigate using its native entry ID. |
-| Native tree picker | `_magpi-acp/session/tree` returns Pi `tree[].entry.id` and `leafId`; navigate with `entryId` | Preserve Pi tree shape, leaf, and native navigation. No structural-ID map. |
-| Native footer Fork picker | `_magpi-acp/session/fork-messages` returns `{ entryId, text }`; legacy `_meta["magpi-acp/fork-entry-id"]` | Preserve the existing picker flow until its consumer is retired. No ACP-ID matching on this response. |
 | Standard untargeted `session/fork` | No target metadata | Pi-native clone of the current leaf. |
 
-`messageId` and `entryId` navigation inputs are mutually exclusive. The two targeted fork metadata keys are mutually exclusive. Transcript actions require an idle session and an Agent-provided ID in that session; unknown, ambiguous, unmapped, wrong-role, stale or inactive-branch IDs are invalid, never silently redirected. Only tree/footer picker actions send native IDs; **Mischief never fetches target lists to match a transcript row to a Pi ID**. A streamed ID has no native action while the turn is running; after settlement a failed correlation remains unavailable rather than becoming a guessed target. All interactions except Cancel are locked in Mischief during streaming.
+MagPi advertises `_meta["magpi-acp/message-target-actions"]: true` in ACP initialization; clients must require it before offering transcript actions. Legacy picker endpoints and native entry-ID targets are no longer supported. Transcript actions require an idle session and an Agent-provided ID in that session; unknown, ambiguous, unmapped, wrong-role, stale or inactive-branch IDs are invalid, never silently redirected. **Mischief never fetches target lists to match a transcript row to a Pi ID**. A streamed ID has no native action while the turn is running; after settlement a failed correlation remains unavailable rather than becoming a guessed target. All interactions except Cancel are locked in Mischief during streaming.
 
 Example (IDs illustrative):
 
@@ -28,7 +26,6 @@ ACP agent_message_chunk messageId=acp-a-1 text="Passed"
 Pi entries             pi-u-31 (user), pi-a-32 (assistant)
 Transcript Fork request _meta={"magpi-acp/fork-message-id":"acp-u-1"}
 Transcript Tree request {messageId:"acp-a-1", summarize:false}
-Tree picker response    {leafId:"pi-a-32", tree:[{entry:{id:"pi-u-31",...},children:[...]}]}
 ```
 
 MagPi privately resolves `acp-u-1 → pi-u-31` or `acp-a-1 → pi-a-32`. A client must treat ACP IDs as opaque, not as Pi entry IDs. ACP v1 supports optional Agent-generated message IDs; they need not be stable across separate loads, but chunks of one message share an ID. See the [ACP message ID RFD](https://agentclientprotocol.com/rfds/message-id).
@@ -36,5 +33,5 @@ MagPi privately resolves `acp-u-1 → pi-u-31` or `acp-a-1 → pi-a-32`. A clien
 ## Evidence and checks
 
 - Pi 0.87.1 emits `message_end` before persistence. `node scripts/check-message-entry-correlation.mjs` verified event↔entry role/order on a real Pi RPC process for two identical prompts, multi-assistant tool reply, forked branch, image-only input, and cancellation. Repeat when Pi changes; do not use event order without verifying the supported version.
-- Component tests cover stable live IDs, exact entry correlation, two identically worded turns, replay including thoughts/images, invalid/missing mappings, and ACP-ID→native action routing. Native picker tests verify their Pi IDs and tree shape remain unchanged. Fork and navigation both reject invalid targets and conflicting inputs.
+- Component tests cover stable live IDs, exact entry correlation, two identically worded turns, replay including thoughts/images, invalid/missing mappings, and ACP-ID→native action routing. Fork and navigation both reject invalid targets; retired native entry-ID inputs are rejected.
 - Validation: format touched files, run `npm run check`, `npm run smoke`, `node scripts/check-message-entry-correlation.mjs`, and `node scripts/smoke-acp-load.mjs`. Exercise a real `MagPiAcpSession` with two prompts and a tool-using reply; after load verify the active transcript still identifies the same messages. Mischief must run its separate live integration against this build. Do not commit unless asked.

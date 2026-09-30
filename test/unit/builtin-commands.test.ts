@@ -13,11 +13,8 @@ import { setImmediate as waitForImmediate } from "node:timers/promises";
 
 import { MagPiAcpAgent, generateThreadTitle } from "../../src/acp/agent.js";
 import {
-  MAGPI_ACP_FORK_ENTRY_ID_META,
   MAGPI_ACP_FORK_MESSAGE_ID_META,
-  MAGPI_ACP_FORK_MESSAGES_METHOD,
   MAGPI_ACP_NAVIGATE_TREE_METHOD,
-  MAGPI_ACP_TREE_METHOD,
 } from "../../src/pi-rpc/tree-command.js";
 import type { TreeNavigationOptions } from "../../src/pi-rpc/tree-command.js";
 import {
@@ -243,26 +240,23 @@ void test("MagPiAcpAgent: standard fork clones the current Pi leaf without metad
   });
 });
 
-void test("MagPiAcpAgent: targeted fork passes a native Pi entry ID", async () => {
+void test("MagPiAcpAgent: rejects retired fork entry IDs", async () => {
   const proc = new FakePiRpcProcess();
   proc.getState = () => ({ sessionFile: "/sessions/source.jsonl" });
   const sessions = new FakeSessions({ proc, sessionId: "s1" });
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
   setSessions(agent, sessions);
 
-  await agent.unstable_forkSession({
-    _meta: { [MAGPI_ACP_FORK_ENTRY_ID_META]: "pi-user-1" },
-    cwd: "/workspace",
-    mcpServers: [],
-    sessionId: "s1",
-  });
-
-  assert.deepEqual(sessions.forkParams, {
-    cwd: "/workspace",
-    entryId: "pi-user-1",
-    piCommand: undefined,
-    sourceSessionFile: "/sessions/source.jsonl",
-  });
+  await assert.rejects(
+    agent.unstable_forkSession({
+      _meta: { "magpi-acp/fork-entry-id": "pi-user-1" },
+      cwd: "/workspace",
+      mcpServers: [],
+      sessionId: "s1",
+    }),
+    { code: -32_602 }
+  );
+  assert.equal(sessions.forkParams, undefined);
 });
 
 const treeUser = (id: string) => ({
@@ -336,17 +330,7 @@ void test("MagPiAcpAgent: transcript actions resolve ACP IDs without client targ
       await assert.rejects(fork(messageId));
     })
   );
-  await assert.rejects(
-    agent.unstable_forkSession({
-      _meta: {
-        [MAGPI_ACP_FORK_MESSAGE_ID_META]: "acp-u1",
-        [MAGPI_ACP_FORK_ENTRY_ID_META]: "pi-u2",
-      },
-      cwd: "/workspace",
-      mcpServers: [],
-      sessionId: "s1",
-    })
-  );
+
   const navigate = async (messageId: string) =>
     await agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
       messageId,
@@ -374,107 +358,17 @@ void test("MagPiAcpAgent: transcript actions resolve ACP IDs without client targ
   assert.deepEqual(navigated, ["pi-a1", "pi-u2"]);
 });
 
-void test("MagPiAcpAgent: fork picker passes native targets through", async () => {
-  const proc = new FakePiRpcProcess();
-  const messages = [{ entryId: "pi-user-1", text: "Fix login" }];
-  proc.getForkMessages = () => messages;
+void test("MagPiAcpAgent: retired picker endpoints are unavailable", async () => {
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
-
-  assert.deepEqual(
-    await agent.extMethod(MAGPI_ACP_FORK_MESSAGES_METHOD, { sessionId: "s1" }),
-    { messages }
+  await Promise.all(
+    ["_magpi-acp/session/fork-messages", "_magpi-acp/session/tree"].map(
+      async (method) => {
+        await assert.rejects(agent.extMethod(method, { sessionId: "s1" }), {
+          code: -32_601,
+        });
+      }
+    )
   );
-});
-
-void test("MagPiAcpAgent: tree picker passes native structure through", async () => {
-  const proc = new FakePiRpcProcess();
-  const tree = [{ children: [], entry: { id: "pi-user-1", type: "message" } }];
-  proc.getTree = () => ({ leafId: "pi-user-1", tree });
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
-
-  assert.deepEqual(
-    await agent.extMethod(MAGPI_ACP_TREE_METHOD, { sessionId: "s1" }),
-    {
-      leafId: "pi-user-1",
-      tree,
-    }
-  );
-});
-
-void test("MagPiAcpAgent: native picker targets do not carry transcript ACP IDs", async () => {
-  const proc = new FakePiRpcProcess();
-  proc.getForkMessages = () => [
-    { entryId: "u1", text: "same" },
-    { entryId: "u2", text: "same" },
-  ];
-  proc.getTree = () => ({
-    leafId: "a2",
-    tree: [
-      {
-        children: [
-          {
-            children: [],
-            entry: { id: "u2", message: { role: "user" }, type: "message" },
-          },
-          {
-            children: [],
-            entry: {
-              id: "a2",
-              message: { role: "assistant" },
-              type: "message",
-            },
-          },
-        ],
-        entry: { id: "u1", message: { role: "user" }, type: "message" },
-      },
-    ],
-  });
-  const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
-  assert.deepEqual(
-    await agent.extMethod(MAGPI_ACP_FORK_MESSAGES_METHOD, { sessionId: "s1" }),
-    {
-      messages: [
-        { entryId: "u1", text: "same" },
-        { entryId: "u2", text: "same" },
-      ],
-    }
-  );
-  const tree = await agent.extMethod(MAGPI_ACP_TREE_METHOD, {
-    sessionId: "s1",
-  });
-  assert.deepEqual(tree, {
-    leafId: "a2",
-    tree: [
-      {
-        children: [
-          {
-            children: [],
-            entry: {
-              id: "u2",
-              message: { role: "user" },
-              type: "message",
-            },
-          },
-          {
-            children: [],
-            entry: {
-              id: "a2",
-              message: { role: "assistant" },
-              type: "message",
-            },
-          },
-        ],
-        entry: {
-          id: "u1",
-          message: { role: "user" },
-          type: "message",
-        },
-      },
-    ],
-  });
 });
 
 void test("MagPiAcpAgent: tree navigation passes summary choices and keeps the session identity", async () => {
@@ -494,7 +388,7 @@ void test("MagPiAcpAgent: tree navigation passes summary choices and keeps the s
     },
   ];
   proc.getTree = () => ({
-    leafId: navigations.length > 0 ? "pi-user-1" : "pi-assistant-2",
+    leafId: "pi-user-1",
     tree,
   });
   proc.getState = () => ({
@@ -505,7 +399,16 @@ void test("MagPiAcpAgent: tree navigation passes summary choices and keeps the s
     navigations.push({ entryId, options });
   };
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
+  setSessions(
+    agent,
+    new FakeSessions({
+      entryIdForMessage: (id: string) =>
+        id === "acp-user-1" ? "pi-user-1" : undefined,
+      isIdle: () => true,
+      proc,
+      sessionId: "s1",
+    })
+  );
   const customInstructions = "Focus on auth paths.\nKeep exact errors.";
   const choices: {
     params: Record<string, unknown>;
@@ -533,7 +436,7 @@ void test("MagPiAcpAgent: tree navigation passes summary choices and keeps the s
     choices.map(
       async (choice) =>
         await agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-          entryId: "pi-user-1",
+          messageId: "acp-user-1",
           sessionId: "s1",
           ...choice.params,
         })
@@ -570,7 +473,7 @@ void test("MagPiAcpAgent: tree navigation rejects malformed summary options befo
       async (options) => {
         await assert.rejects(
           agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-            entryId: "pi-user-1",
+            messageId: "acp-user-1",
             sessionId: "s1",
             ...options,
           }),
@@ -584,7 +487,7 @@ void test("MagPiAcpAgent: tree navigation rejects malformed summary options befo
 
 void test("MagPiAcpAgent: tree navigation surfaces summary failure without changing the leaf", async () => {
   const proc = new FakePiRpcProcess();
-  const activeLeaf = "pi-assistant-2";
+  const activeLeaf = "pi-user-1";
   const tree = [
     {
       children: [],
@@ -606,11 +509,20 @@ void test("MagPiAcpAgent: tree navigation surfaces summary failure without chang
     throw new Error("branch summary failed");
   };
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
+  setSessions(
+    agent,
+    new FakeSessions({
+      entryIdForMessage: (id: string) =>
+        id === "acp-user-1" ? "pi-user-1" : undefined,
+      isIdle: () => true,
+      proc,
+      sessionId: "s1",
+    })
+  );
 
   await assert.rejects(
     agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-      entryId: "pi-user-1",
+      messageId: "acp-user-1",
       sessionId: "s1",
       summarize: true,
     }),
@@ -628,20 +540,30 @@ void test("MagPiAcpAgent: tree navigation rejects non-message and stale entry ID
     tree: [{ children: [], entry: { id: "compaction-1", type: "compaction" } }],
   });
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
-  setSessions(agent, new FakeSessions({ proc, sessionId: "s1" }));
-
-  await assert.rejects(
-    agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-      entryId: "compaction-1",
+  setSessions(
+    agent,
+    new FakeSessions({
+      entryIdForMessage: (id: string) =>
+        id === "acp-compaction" ? "compaction-1" : undefined,
+      isIdle: () => true,
+      proc,
       sessionId: "s1",
-    }),
-    { code: -32_602 }
+    })
   );
-  await assert.rejects(
-    agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
-      entryId: "foreign-entry",
-      sessionId: "s1",
-    }),
-    { code: -32_602 }
+
+  await Promise.all(
+    [
+      { messageId: "acp-compaction" },
+      { messageId: "foreign-entry" },
+      { entryId: "compaction-1" },
+    ].map(async (target) => {
+      await assert.rejects(
+        agent.extMethod(MAGPI_ACP_NAVIGATE_TREE_METHOD, {
+          ...target,
+          sessionId: "s1",
+        }),
+        { code: -32_602 }
+      );
+    })
   );
 });

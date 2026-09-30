@@ -35,13 +35,9 @@ import { PiRpcProcess } from "../pi-rpc/process.js";
 import type { PiSessionEntry, PiSessionTreeNode } from "../pi-rpc/process.js";
 import {
   MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY,
-  MAGPI_ACP_FORK_ENTRY_ID_META,
   MAGPI_ACP_FORK_MESSAGE_ID_META,
-  MAGPI_ACP_FORK_MESSAGES_METHOD,
-  MAGPI_ACP_FORK_PICKER_CAPABILITY,
+  MAGPI_ACP_MESSAGE_TARGET_ACTIONS_CAPABILITY,
   MAGPI_ACP_NAVIGATE_TREE_METHOD,
-  MAGPI_ACP_TREE_METHOD,
-  MAGPI_ACP_TREE_PICKER_CAPABILITY,
 } from "../pi-rpc/tree-command.js";
 import type { TreeNavigationOptions } from "../pi-rpc/tree-command.js";
 import { asRecord, errorMessage, stringValue } from "../unknown.js";
@@ -1362,12 +1358,8 @@ const advertiseCommands = (
 };
 
 const treeNavigationOptions = (
-  method: string,
   params: Record<string, unknown>
-): TreeNavigationOptions | null => {
-  if (method !== MAGPI_ACP_NAVIGATE_TREE_METHOD) {
-    return null;
-  }
+): TreeNavigationOptions => {
   const { summarize, customInstructions } = params;
   if (summarize !== undefined && typeof summarize !== "boolean") {
     throw RequestError.invalidParams("summarize must be a boolean.");
@@ -1381,19 +1373,15 @@ const treeNavigationOptions = (
   return { customInstructions, summarize: summarize ?? false };
 };
 
-const navigationTarget = (
-  params: Record<string, unknown>
-): { id: string; isMessage: boolean } => {
-  const hasEntryId = Object.hasOwn(params, "entryId");
-  const hasMessageId = Object.hasOwn(params, "messageId");
-  if (hasEntryId === hasMessageId) {
-    throw RequestError.invalidParams("Provide either entryId or messageId.");
+const navigationTarget = (params: Record<string, unknown>): string => {
+  if (
+    Object.hasOwn(params, "entryId") ||
+    typeof params.messageId !== "string" ||
+    params.messageId.trim().length === 0
+  ) {
+    throw RequestError.invalidParams("A message ID is required.");
   }
-  const id = hasMessageId ? params.messageId : params.entryId;
-  if (typeof id !== "string" || id.trim().length === 0) {
-    throw RequestError.invalidParams("Target ID must be a non-empty string.");
-  }
-  return { id, isMessage: hasMessageId };
+  return params.messageId;
 };
 
 const hasSessionName = (stateValue: unknown): boolean => {
@@ -1425,13 +1413,7 @@ const modelName = (stateValue: unknown): string | null => {
 };
 
 const assertKnownExtensionMethod = (method: string): void => {
-  if (
-    ![
-      MAGPI_ACP_FORK_MESSAGES_METHOD,
-      MAGPI_ACP_TREE_METHOD,
-      MAGPI_ACP_NAVIGATE_TREE_METHOD,
-    ].includes(method)
-  ) {
+  if (method !== MAGPI_ACP_NAVIGATE_TREE_METHOD) {
     throw RequestError.methodNotFound(method);
   }
 };
@@ -1556,8 +1538,7 @@ export class MagPiAcpAgent implements ACPAgent {
       agentCapabilities: {
         _meta: {
           [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true,
-          [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,
-          [MAGPI_ACP_TREE_PICKER_CAPABILITY]: true,
+          [MAGPI_ACP_MESSAGE_TARGET_ACTIONS_CAPABILITY]: true,
         },
         loadSession: true,
         mcpCapabilities: { http: false, sse: false },
@@ -1833,11 +1814,10 @@ export class MagPiAcpAgent implements ACPAgent {
   async unstable_forkSession(
     params: ForkSessionRequest
   ): Promise<ForkSessionResponse> {
-    const rawEntryId = params._meta?.[MAGPI_ACP_FORK_ENTRY_ID_META];
     const rawMessageId = params._meta?.[MAGPI_ACP_FORK_MESSAGE_ID_META];
-    if (rawEntryId !== undefined && rawMessageId !== undefined) {
+    if (Object.hasOwn(params._meta ?? {}, "magpi-acp/fork-entry-id")) {
       throw RequestError.invalidParams(
-        "Choose either fork entry ID or message ID."
+        "Fork entry IDs are no longer supported."
       );
     }
     if (
@@ -1848,15 +1828,7 @@ export class MagPiAcpAgent implements ACPAgent {
         "Fork message ID must be a non-empty string."
       );
     }
-    if (
-      rawEntryId !== undefined &&
-      (typeof rawEntryId !== "string" || rawEntryId.trim().length === 0)
-    ) {
-      throw RequestError.invalidParams(
-        "Fork entry ID must be a non-empty string."
-      );
-    }
-    let entryId = typeof rawEntryId === "string" ? rawEntryId : undefined;
+    let entryId: string | undefined;
     const source = await this.restoreSession(params.sessionId);
     if (typeof rawMessageId === "string") {
       const tree = await source.proc.getTree();
@@ -1890,57 +1862,39 @@ export class MagPiAcpAgent implements ACPAgent {
       throw RequestError.invalidParams("sessionId is required.");
     }
 
-    const navigationOptions = treeNavigationOptions(method, params);
+    const navigationOptions = treeNavigationOptions(params);
     const session = await this.restoreSession(sessionId);
-    if (method === MAGPI_ACP_FORK_MESSAGES_METHOD) {
-      return { messages: await session.proc.getForkMessages() };
+    const messageId = navigationTarget(params);
+    const before = await session.proc.getTree();
+    const entryId = resolveTranscriptTarget(session, messageId, before);
+    const entry = findTreeMessage(before.tree, entryId);
+    if (entry === null) {
+      throw RequestError.invalidParams(`Pi tree message not found: ${entryId}`);
     }
 
-    if (method === MAGPI_ACP_TREE_METHOD) {
-      return await session.proc.getTree();
+    const identity = asRecord(await session.proc.getState());
+    await session.proc.navigateTree(entryId, navigationOptions);
+    const [after, nextState] = await Promise.all([
+      session.proc.getTree(),
+      session.proc.getState(),
+    ]);
+    const nextIdentity = asRecord(nextState);
+    if (
+      nextIdentity?.sessionFile !== identity?.sessionFile ||
+      nextIdentity?.sessionId !== identity?.sessionId
+    ) {
+      throw RequestError.internalError(
+        {},
+        "Pi tree navigation changed the session identity."
+      );
     }
 
-    if (navigationOptions !== null) {
-      const target = navigationTarget(params);
-      const before = await session.proc.getTree();
-      const entryId = target.isMessage
-        ? resolveTranscriptTarget(session, target.id, before)
-        : target.id;
-      const entry = findTreeMessage(before.tree, entryId);
-      if (entry === null) {
-        throw RequestError.invalidParams(
-          `Pi tree message not found: ${entryId}`
-        );
-      }
-
-      const identity = asRecord(await session.proc.getState());
-      await session.proc.navigateTree(entryId, navigationOptions);
-      const [after, nextState] = await Promise.all([
-        session.proc.getTree(),
-        session.proc.getState(),
-      ]);
-      const nextIdentity = asRecord(nextState);
-      if (
-        nextIdentity?.sessionFile !== identity?.sessionFile ||
-        nextIdentity?.sessionId !== identity?.sessionId
-      ) {
-        throw RequestError.internalError(
-          {},
-          "Pi tree navigation changed the session identity."
-        );
-      }
-
-      const role = entry.message?.role;
-      return {
-        draft:
-          role === "user"
-            ? normalizePiMessageText(entry.message?.content)
-            : null,
-        leafId: after.leafId,
-      };
-    }
-
-    throw RequestError.methodNotFound(method);
+    const role = entry.message?.role;
+    return {
+      draft:
+        role === "user" ? normalizePiMessageText(entry.message?.content) : null,
+      leafId: after.leafId,
+    };
   }
 
   async listSessions(

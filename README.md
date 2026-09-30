@@ -157,7 +157,7 @@ Project layout:
 - Pi reads, writes, and executes locally; ACP filesystem and terminal delegation are not implemented.
 - Non-empty MCP server configuration is retained in session state but is not forwarded to Pi.
 - Permanent ACP session deletion is not implemented; Pi session history remains on disk.
-- Targeted native forks accept Pi user-message entry IDs; assistant-message targets are unsupported.
+- Message-targeted Fork/Tree is advertised by `_meta["magpi-acp/message-target-actions"]`. Clients send ACP message IDs, not Pi entry IDs; Fork accepts user messages only.
 - Pi extension UI methods require an ACP translation before clients can render them.
 
 ## Attribution
