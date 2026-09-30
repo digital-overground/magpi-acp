@@ -124,8 +124,10 @@ const loadAndCountReplay = async (sessionId) => {
     }
 
     if (hasMessageId(message, 2)) {
-      if (message.result !== null) {
-        throw new Error("Expected session/load result to be null");
+      if (message.error !== undefined) {
+        throw new Error(
+          `session/load failed: ${JSON.stringify(message.error)}`
+        );
       }
       agent.kill();
       return updates;

@@ -4,8 +4,7 @@ import test, { afterEach, beforeEach } from "node:test";
 import { MagPiAcpAgent } from "../../src/acp/agent.js";
 import {
   MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY,
-  MAGPI_ACP_FORK_PICKER_CAPABILITY,
-  MAGPI_ACP_TREE_PICKER_CAPABILITY,
+  MAGPI_ACP_MESSAGE_TARGET_ACTIONS_CAPABILITY,
 } from "../../src/pi-rpc/tree-command.js";
 import { FakeAgentSideConnection, asAgentConn } from "../helpers/fakes.js";
 
@@ -42,13 +41,12 @@ void test("MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT: 'true' enables embeddedContext", a
   assert.equal(await initializeWithEmbeddedContext("true"), true);
 });
 
-void test("initialize advertises optional native Pi fork, tree, and branch summary support", async () => {
+void test("initialize advertises message-target actions and branch summaries", async () => {
   const agent = new MagPiAcpAgent(asAgentConn(new FakeAgentSideConnection()));
   const response = await agent.initialize({ protocolVersion: 1 });
 
   assert.deepEqual(response.agentCapabilities?._meta, {
     [MAGPI_ACP_BRANCH_SUMMARY_CAPABILITY]: true,
-    [MAGPI_ACP_FORK_PICKER_CAPABILITY]: true,
-    [MAGPI_ACP_TREE_PICKER_CAPABILITY]: true,
+    [MAGPI_ACP_MESSAGE_TARGET_ACTIONS_CAPABILITY]: true,
   });
 });

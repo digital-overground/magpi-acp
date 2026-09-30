@@ -2,6 +2,7 @@ import { PassThrough } from "node:stream";
 
 import { PiRpcProcess } from "../../src/pi-rpc/process.js";
 import type {
+  PiEntries,
   PiForkMessage,
   PiRpcEvent,
   PiSessionTreeNode,
@@ -49,6 +50,10 @@ export class FakePiRpcProcess {
   exportHtml: (outputPath?: string) => unknown = (outputPath) => {
     void this.state;
     return { path: outputPath ?? "" };
+  };
+  getEntries: (since?: string) => PiEntries | Promise<PiEntries> = () => {
+    void this.state;
+    return { entries: [], leafId: null };
   };
   getForkMessages: () => PiForkMessage[] | Promise<PiForkMessage[]> = () => {
     void this.messages;
@@ -136,6 +141,7 @@ export class FakePiRpcProcess {
       const result = await Promise.resolve(this.exportHtml(outputPath));
       return isExportResult(result) ? result : { path: "" };
     };
+    instance.getEntries = async (since) => await this.getEntries(since);
     instance.getForkMessages = async () => await this.getForkMessages();
     instance.getTree = async () => await this.getTree();
     instance.navigateTree = async (entryId, options) => {

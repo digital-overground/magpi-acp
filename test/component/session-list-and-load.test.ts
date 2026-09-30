@@ -44,7 +44,11 @@ void test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays
       JSON.stringify({
         id: "b2c3d4e5",
         message: {
-          content: [{ text: "Hi there!", type: "text" }],
+          content: [
+            { text: "Thinking first", type: "thinking" },
+            { text: "Hi there!", type: "text" },
+            { text: "Thinking again", type: "thinking" },
+          ],
           role: "assistant",
         },
         parentId: "a1b2c3d4",
@@ -153,7 +157,7 @@ void test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays
         texts.some(
           (item) =>
             item.kind === "user_message_chunk" &&
-            item.messageId === undefined &&
+            item.messageId === "a1b2c3d4" &&
             item.text === "Hello"
         )
       );
@@ -161,9 +165,34 @@ void test("MagPiAcpAgent: listSessions lists pi sessions and loadSession replays
         texts.some(
           (item) =>
             item.kind === "agent_message_chunk" &&
-            item.messageId === undefined &&
+            item.messageId === "b2c3d4e5" &&
             item.text === "Hi there!"
         )
+      );
+      assert.deepEqual(
+        texts.filter(
+          (item) =>
+            item.kind === "agent_thought_chunk" ||
+            (item.kind === "agent_message_chunk" &&
+              item.messageId === "b2c3d4e5")
+        ),
+        [
+          {
+            kind: "agent_thought_chunk",
+            messageId: undefined,
+            text: "Thinking first",
+          },
+          {
+            kind: "agent_message_chunk",
+            messageId: "b2c3d4e5",
+            text: "Hi there!",
+          },
+          {
+            kind: "agent_thought_chunk",
+            messageId: undefined,
+            text: "Thinking again",
+          },
+        ]
       );
       assert.deepEqual(
         conn.updates.find(
@@ -297,8 +326,14 @@ void test("MagPiAcpAgent: reloading after tree navigation preserves the live bra
           update.sessionUpdate === "user_message_chunk" ||
           update.sessionUpdate === "agent_message_chunk"
       )
-      .map((update) => asRecord(update.content)?.text);
-    assert.deepEqual(replayed, ["First prompt", "First answer"]);
+      .map((update) => ({
+        messageId: update.messageId,
+        text: asRecord(update.content)?.text,
+      }));
+    assert.deepEqual(replayed, [
+      { messageId: "user-1", text: "First prompt" },
+      { messageId: "assistant-1", text: "First answer" },
+    ]);
     assert.equal(spawnCount, 1);
     assert.equal(disposed, false);
   } finally {

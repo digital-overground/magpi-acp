@@ -1214,6 +1214,7 @@ void test("MagPiAcpSession: queues concurrent prompt and starts it after agent_s
 
   const first = session.prompt("one");
   const second = session.prompt("two");
+  await delay(0);
 
   assert.equal(proc.prompts.length, 1);
   assert.equal(proc.prompts[0]?.message, "one");
@@ -1227,6 +1228,7 @@ void test("MagPiAcpSession: queues concurrent prompt and starts it after agent_s
   proc.emit({ type: "agent_settled" });
   const r1 = await first;
   assert.equal(r1, "end_turn");
+  await delay(0);
 
   assert.equal(proc.prompts.length, 2);
   assert.equal(proc.prompts[1]?.message, "two");
@@ -1254,6 +1256,7 @@ void test("MagPiAcpSession: cancel clears queued prompts", async () => {
 
   const first = session.prompt("one");
   const second = session.prompt("two");
+  await delay(0);
 
   assert.equal(proc.prompts.length, 1);
 

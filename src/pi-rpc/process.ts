@@ -54,6 +54,7 @@ type PiRpcCommand =
   | { type: "clone"; id?: string }
   | { type: "get_fork_messages"; id?: string }
   | { type: "get_tree"; id?: string }
+  | { type: "get_entries"; id?: string; since?: string }
   // Messages
   | { type: "get_messages"; id?: string }
   // Commands
@@ -109,6 +110,10 @@ export interface PiSessionEntry {
   message?: { role?: string; content?: unknown };
   [key: string]: unknown;
 }
+export interface PiEntries {
+  entries: PiSessionEntry[];
+  leafId: string | null;
+}
 export interface PiSessionTreeNode {
   entry: PiSessionEntry;
   children: PiSessionTreeNode[];
@@ -119,6 +124,7 @@ export interface PiSessionTreeNode {
 const toPiForkMessage = (value: unknown): PiForkMessage[] => {
   const message = asRecord(value);
   return typeof message?.entryId === "string" &&
+    message.entryId.trim().length > 0 &&
     typeof message.text === "string"
     ? [{ entryId: message.entryId, text: message.text }]
     : [];
@@ -133,6 +139,7 @@ const toPiSessionTreeNode = (value: unknown): PiSessionTreeNode[] => {
   if (
     rawEntry === undefined ||
     typeof rawEntry.id !== "string" ||
+    rawEntry.id.trim().length === 0 ||
     typeof rawEntry.type !== "string"
   ) {
     return [];
@@ -413,6 +420,39 @@ export class PiRpcProcess {
     }
     const messages = asRecord(res.data)?.messages;
     return Array.isArray(messages) ? messages.flatMap(toPiForkMessage) : [];
+  }
+
+  async getEntries(since?: string): Promise<PiEntries> {
+    const res = await this.request({
+      type: "get_entries",
+      ...(since === undefined ? {} : { since }),
+    });
+    if (!res.success) {
+      throw new Error(
+        `pi get_entries failed: ${res.error ?? JSON.stringify(res.data)}`
+      );
+    }
+    const data = asRecord(res.data);
+    if (
+      !Array.isArray(data?.entries) ||
+      (data.leafId !== null && typeof data.leafId !== "string")
+    ) {
+      throw new Error("Pi returned invalid get_entries data.");
+    }
+    const entries: PiSessionEntry[] = data.entries.map((value: unknown) => {
+      const entry = asRecord(value);
+      if (
+        typeof entry?.id !== "string" ||
+        entry.id.length === 0 ||
+        typeof entry.type !== "string" ||
+        (entry.type === "message" &&
+          typeof asRecord(entry.message)?.role !== "string")
+      ) {
+        throw new Error("Pi returned invalid get_entries entry.");
+      }
+      return { ...entry, id: entry.id, type: entry.type };
+    });
+    return { entries, leafId: data.leafId };
   }
 
   async getTree(): Promise<{
