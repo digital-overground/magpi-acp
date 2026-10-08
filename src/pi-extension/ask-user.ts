@@ -11,7 +11,6 @@ interface AskParams {
   options?: AskOption[];
   allowMultiple?: boolean;
   allowFreeform?: boolean;
-  allowComment?: boolean;
   timeout?: number;
 }
 interface DialogOptions {
@@ -99,14 +98,10 @@ const result = (params: AskParams, response: AskResponse | null): AskResult => {
 };
 
 const commentFor = async (
-  params: AskParams,
   context: AskContext,
   prompt: string,
   dialogOptions: DialogOptions | undefined
 ): Promise<string | undefined> => {
-  if (params.allowComment !== true) {
-    return undefined;
-  }
   const answer = await context.ui.input(
     prompt,
     "Optional comment (press Enter to skip)...",
@@ -155,7 +150,7 @@ const askMultiple = async (
     return result(params, null);
   }
 
-  const comment = await commentFor(params, context, prompt, dialogOptions);
+  const comment = await commentFor(context, prompt, dialogOptions);
   return result(params, {
     ...(comment === undefined ? {} : { comment }),
     kind: "selection",
@@ -182,7 +177,7 @@ const askSingle = async (
     return await askFreeform(params, context, prompt, dialogOptions);
   }
 
-  const comment = await commentFor(params, context, prompt, dialogOptions);
+  const comment = await commentFor(context, prompt, dialogOptions);
   return result(params, {
     ...(comment === undefined ? {} : { comment }),
     kind: "selection",
@@ -226,11 +221,6 @@ export default function registerMagPiAcpAskUser(pi: PiExtensionApi): void {
     name: "ask_user",
     parameters: {
       properties: {
-        allowComment: {
-          description:
-            "Collect an optional comment after selection. Default: false",
-          type: "boolean",
-        },
         allowFreeform: {
           description: "Add a freeform text option. Default: true",
           type: "boolean",

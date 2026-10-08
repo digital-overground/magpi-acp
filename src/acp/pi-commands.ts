@@ -3,10 +3,13 @@ import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from "../pi-rpc/tree-command.js";
 import { asRecord } from "../unknown.js";
 
+export const MAGPI_ACP_COMMAND_SOURCE_META = "magpi-acp/command-source";
+
 export interface PiRpcCommandInfo {
   name?: unknown;
   description?: unknown;
   source?: unknown;
+  sourceInfo?: unknown;
   location?: unknown;
   path?: unknown;
 }
@@ -52,8 +55,14 @@ export const toAvailableCommandsFromPiGetCommands = (
     }
 
     const desc = typeof c?.description === "string" ? c.description.trim() : "";
+    const sourceInfo = asRecord(c.sourceInfo);
+    const commandSource =
+      typeof sourceInfo?.source === "string" ? sourceInfo.source.trim() : "";
 
     out.push({
+      ...(commandSource
+        ? { _meta: { [MAGPI_ACP_COMMAND_SOURCE_META]: commandSource } }
+        : {}),
       description: desc || describeFallback(c),
       name,
     });
