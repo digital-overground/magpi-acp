@@ -49,7 +49,11 @@ void test("Pi ask_user extension returns the selected answer", async () => {
     {
       hasUI: true,
       ui: {
-        input: noInput,
+        input: async (title: string, placeholder?: string) => {
+          await Promise.resolve();
+          prompts.push({ input: { placeholder, title } });
+          return "It is safer.";
+        },
         select: async (title: string, options: string[]) => {
           await Promise.resolve();
           prompts.push({ options, title });
@@ -64,9 +68,15 @@ void test("Pi ask_user extension returns the selected answer", async () => {
       options: ["Alpha", "Beta", "✏️ Type custom response..."],
       title: "Which option?\n\nContext:\nChoose the safer default.",
     },
+    {
+      input: {
+        placeholder: "Optional comment (press Enter to skip)...",
+        title: "Which option?\n\nContext:\nChoose the safer default.",
+      },
+    },
   ]);
   assert.deepEqual(result, {
-    content: [{ text: "User answered: Beta", type: "text" }],
+    content: [{ text: "User answered: Beta — It is safer.", type: "text" }],
     details: {
       cancelled: false,
       context: "Choose the safer default.",
@@ -75,7 +85,11 @@ void test("Pi ask_user extension returns the selected answer", async () => {
         { description: "Second option", title: "Beta" },
       ],
       question: "Which option?",
-      response: { kind: "selection", selections: ["Beta"] },
+      response: {
+        comment: "It is safer.",
+        kind: "selection",
+        selections: ["Beta"],
+      },
     },
   });
 });

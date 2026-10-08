@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { toAvailableCommandsFromPiGetCommands } from "../../src/acp/pi-commands.js";
+import {
+  MAGPI_ACP_COMMAND_SOURCE_META,
+  toAvailableCommandsFromPiGetCommands,
+} from "../../src/acp/pi-commands.js";
 
 void test("toAvailableCommandsFromPiGetCommands: exposes Pi extension, skill, and prompt commands", () => {
   const data = {
@@ -17,6 +20,7 @@ void test("toAvailableCommandsFromPiGetCommands: exposes Pi extension, skill, an
         location: "user",
         name: "skill:foo",
         source: "skill",
+        sourceInfo: { source: "git:github.com/example/foo" },
       },
       { location: "project", name: "y", source: "prompt" },
     ],
@@ -24,7 +28,13 @@ void test("toAvailableCommandsFromPiGetCommands: exposes Pi extension, skill, an
 
   assert.deepEqual(toAvailableCommandsFromPiGetCommands(data), [
     { description: "X", name: "x" },
-    { description: "Foo", name: "skill:foo" },
+    {
+      _meta: {
+        [MAGPI_ACP_COMMAND_SOURCE_META]: "git:github.com/example/foo",
+      },
+      description: "Foo",
+      name: "skill:foo",
+    },
     { description: "(prompt:project)", name: "y" },
   ]);
 });
