@@ -3,23 +3,29 @@ import { once } from "node:events";
 import { agent, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 
 import { MagPiAcpAgent } from "./acp/agent.js";
-import { getPiCommand, shouldUseShellForPiCommand } from "./pi-rpc/command.js";
+import { resolvePiLaunch } from "./pi-rpc/command.js";
 import { MAGPI_ACP_NAVIGATE_TREE_METHOD } from "./pi-rpc/tree-command.js";
 import { asRecord } from "./unknown.js";
 
 // Terminal Auth entrypoint. The ACP client launches the agent with `--terminal-login`.
 if (process.argv.includes("--terminal-login")) {
   const { spawnSync } = await import("node:child_process");
-  const cmd = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND);
-  const res = spawnSync(cmd, [], {
+  let launch;
+  try {
+    launch = resolvePiLaunch(process.env.MAGPI_ACP_PI_COMMAND);
+  } catch (error) {
+    process.stderr.write(`magpi-acp: ${String(error)}\n`);
+    process.exit(1);
+  }
+  const res = spawnSync(launch.command, launch.args, {
     env: process.env,
-    shell: shouldUseShellForPiCommand(cmd),
+    shell: launch.shell,
     stdio: "inherit",
   });
 
   if (asRecord(res.error)?.code === "ENOENT") {
     process.stderr.write(
-      `magpi-acp: could not start pi (command not found: ${cmd}). Install it via \`npm install -g @earendil-works/pi-coding-agent\` or ensure \`pi\` is on your PATH.\n`
+      `magpi-acp: could not start pi (command not found: ${launch.command}). ${launch.packageRoot === undefined ? "Check MAGPI_ACP_PI_COMMAND or install the requested Pi executable." : "Reinstall magpi-acp to restore its packaged Pi."}\n`
     );
     process.exit(1);
   }

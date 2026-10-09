@@ -1,16 +1,17 @@
+import path from "node:path";
+
 import type { AuthMethod } from "@agentclientprotocol/sdk";
 
 export const PI_SETUP_METHOD_ID = "pi_terminal_login";
 
 const terminalAuthLaunchSpec = (): { command: string; args: string[] } => {
-  // If we were launched as `node /path/to/dist/index.js`, reuse that.
-  // This is the most reliable path for local source configurations.
-  const [argv0 = "node", argv1] = process.argv;
-  if (argv1 && argv0.includes("node") && argv1.endsWith(".js")) {
-    return { args: [argv1, "--terminal-login"], command: argv0 };
+  const [, entry] = process.argv;
+  if (entry !== undefined) {
+    return {
+      args: [path.resolve(entry), "--terminal-login"],
+      command: process.execPath,
+    };
   }
-
-  // Fallback: assume `magpi-acp` is on PATH.
   return { args: ["--terminal-login"], command: "magpi-acp" };
 };
 

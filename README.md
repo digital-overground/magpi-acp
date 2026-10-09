@@ -38,24 +38,23 @@ The bundled tool intentionally omits the external package's terminal overlays an
 
 ## Mischief
 
-[Mischief](https://github.com/digital-overground/mischief) is the recommended way to use MagPi. It provides polished multi-thread workspaces, Pi session history, inline elicitation, integrated authentication, and other UI tailored to MagPi while preserving standard ACP behavior.
+[Mischief](https://github.com/digital-overground/mischief) is the recommended way to use MagPi. It provides multi-thread workspaces, Pi session history, inline elicitation, and integrated authentication while preserving standard ACP behavior.
 
 ## Requirements
 
 Install these where your ACP client runs agents:
 
-- [Node.js](https://nodejs.org/) 22 or newer.
-- [Pi](https://github.com/earendil-works/pi-mono), available as `pi` on `PATH`.
-- A model provider configured through Pi.
+- [Node.js](https://nodejs.org/) 22.19.0 or newer.
+- A model provider configured and authenticated through Pi.
 
-For Remote SSH, Dev Containers, or WSL, install Node.js, Pi, and MagPi ACP in that remote environment.
+MagPi installs a tested Pi version as an npm dependency; a separate global `pi` executable is not required. Pi still manages credentials, settings, extensions, and sessions in your Pi directory. For Remote SSH, Dev Containers, or WSL, install Node.js and MagPi ACP in that remote environment and configure a provider there.
 
 ## Install
 
-Install Pi and MagPi ACP globally:
+Install MagPi ACP (including Pi) globally:
 
 ```sh
-npm install -g @earendil-works/pi-coding-agent magpi-acp
+npm install -g magpi-acp
 ```
 
 Configure your ACP client to launch `magpi-acp` from `PATH`. Mischief can install it during first-Thread setup; set `mischief.magpiAcpPath` to use another executable or a built `dist/index.js`.
@@ -66,15 +65,7 @@ Update MagPi with:
 npm install -g magpi-acp@latest
 ```
 
-Restart the ACP agent process after updating.
-
-## Optional Pi extensions
-
-Install todo support for ACP plans:
-
-```sh
-pi install npm:@juicesharp/rpiv-todo
-```
+Pi updates arrive through tested MagPi releases, not separate Pi upgrades. Restart the ACP agent process after updating.
 
 ## Roles
 
@@ -97,7 +88,7 @@ MagPi reads named role presets from `~/.pi/agent/roles.json` and exposes them as
 }
 ```
 
-Each role is a named preset that applies its model and thinking level together. ACP clients surface roles as a mode selector in the session controls; choose a role to switch both settings with one standard configuration update. MagPi reports the matching role as active whenever the current model and thinking level match a preset. Selecting a model or thinking level independently may leave no role selected.
+ACP clients surface roles as a mode selector; choosing one sets its model and thinking level together. MagPi reports the matching role as active whenever the current model and thinking level match a preset. Selecting a model or thinking level independently may leave no role selected.
 
 JSON key order controls role order. Use provider/model IDs available in your Pi installation and one of Pi's supported thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Restart the agent process after editing `roles.json` so clients receive the updated options.
 
@@ -122,7 +113,7 @@ Skill commands follow Pi's settings. The bundled internal tree-navigation bridge
 
 Set `quietStartup: true` in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json` to suppress startup details. Update notices remain visible.
 
-Set `MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT=true` when the client should be allowed to send embedded ACP resources. Set `MAGPI_ACP_PI_COMMAND` in the agent process environment to override the `pi` executable path.
+Set `MAGPI_ACP_ENABLE_EMBEDDED_CONTEXT=true` when the client should be allowed to send embedded ACP resources. To use a separately installed Pi instead of MagPi's packaged version, set `MAGPI_ACP_PI_COMMAND` in the agent process environment to its executable path (or `pi` if it is on `PATH`). Overrides are maintained and updated by the caller; MagPi does not fall back to a global Pi if its packaged dependency is missing.
 
 ## Authentication
 

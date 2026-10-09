@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,7 +30,7 @@ import type {
   AvailableCommand,
 } from "@agentclientprotocol/sdk";
 
-import { getPiCommand, shouldUseShellForPiCommand } from "../pi-rpc/command.js";
+import { resolvePiLaunch } from "../pi-rpc/command.js";
 import { PiRpcProcess } from "../pi-rpc/process.js";
 import type { PiSessionEntry, PiSessionTreeNode } from "../pi-rpc/process.js";
 import {
@@ -505,12 +505,12 @@ export const generateThreadTitle = async (params: {
     "",
     `User: ${params.user.slice(0, 4000)}`,
   ].join("\n");
-  const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND);
-
   try {
+    const launch = resolvePiLaunch(process.env.MAGPI_ACP_PI_COMMAND);
     const child = execFile(
-      command,
+      launch.command,
       [
+        ...launch.args,
         "--print",
         "--no-session",
         "--no-tools",
@@ -528,7 +528,7 @@ export const generateThreadTitle = async (params: {
       ],
       {
         cwd: params.cwd,
-        shell: shouldUseShellForPiCommand(command),
+        shell: launch.shell,
         timeout: 15_000,
       }
     );
@@ -570,10 +570,10 @@ const compareSemver = (first: string, second: string): number => {
 };
 
 const installedPiVersion = (): string => {
-  const command = getPiCommand(process.env.MAGPI_ACP_PI_COMMAND);
-  const result = spawnSync(command, ["--version"], {
+  const launch = resolvePiLaunch(process.env.MAGPI_ACP_PI_COMMAND);
+  const result = spawnSync(launch.command, [...launch.args, "--version"], {
     encoding: "utf-8",
-    shell: shouldUseShellForPiCommand(command),
+    shell: launch.shell,
   });
   const stdout = (result.stdout ?? "").trim();
   const stderr = (result.stderr ?? "").trim();
@@ -581,6 +581,9 @@ const installedPiVersion = (): string => {
 };
 
 const buildUpdateNotice = (): string | null => {
+  if (process.env.MAGPI_ACP_PI_COMMAND !== undefined) {
+    return null;
+  }
   try {
     const installed = installedPiVersion();
     if (installed.length === 0 || !isSemver(installed)) {
@@ -599,7 +602,7 @@ const buildUpdateNotice = (): string | null => {
     ) {
       return null;
     }
-    return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @earendil-works/pi-coding-agent\``;
+    return `A newer Pi version is available (v${latest}; MagPi includes v${installed}). Update magpi-acp when a release includes it.`;
   } catch {
     return null;
   }
@@ -627,38 +630,9 @@ const buildStartupInfo = (options: { updateNotice: string | null }): string => {
 };
 
 const findChangelog = (): string | null => {
-  try {
-    const whichCommand = process.platform === "win32" ? "where" : "which";
-    const result = spawnSync(whichCommand, ["pi"], { encoding: "utf-8" });
-    const piPath = (result.stdout ?? "").split(/\r?\n/u)[0]?.trim();
-    if (piPath !== undefined && piPath.length > 0) {
-      const packageRoot = path.dirname(path.dirname(realpathSync(piPath)));
-      const changelogPath = path.join(packageRoot, "CHANGELOG.md");
-      if (existsSync(changelogPath)) {
-        return changelogPath;
-      }
-    }
-  } catch {
-    // Try the npm global module location.
-  }
-  try {
-    const npmRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf-8" });
-    const root = (npmRoot.stdout ?? "").trim();
-    if (root.length > 0) {
-      const changelogPath = path.join(
-        root,
-        "@earendil-works",
-        "pi-coding-agent",
-        "CHANGELOG.md"
-      );
-      if (existsSync(changelogPath)) {
-        return changelogPath;
-      }
-    }
-  } catch {
-    // The changelog cannot be located.
-  }
-  return null;
+  const root = resolvePiLaunch(process.env.MAGPI_ACP_PI_COMMAND).packageRoot;
+  const changelog = root === undefined ? null : path.join(root, "CHANGELOG.md");
+  return changelog !== null && existsSync(changelog) ? changelog : null;
 };
 
 const sendAgentText = async (
