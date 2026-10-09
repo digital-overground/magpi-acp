@@ -7,7 +7,7 @@ import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import { asRecord, errorMessage } from "../unknown.js";
-import { getPiCommand, shouldUseShellForPiCommand } from "./command.js";
+import { resolvePiLaunch } from "./command.js";
 import { PiRpcSpawnError } from "./spawn-error.js";
 import { MAGPI_ACP_NAVIGATE_TREE_COMMAND } from "./tree-command.js";
 import type { TreeNavigationOptions } from "./tree-command.js";
@@ -272,14 +272,15 @@ export class PiRpcProcess {
   }
 
   static async spawn(params: SpawnParams): Promise<PiRpcProcess> {
-    // On Windows, npm commonly creates pi.cmd / pi.bat launcher scripts.
-    const cmd = getPiCommand(params.piCommand);
+    const launch = resolvePiLaunch(params.piCommand);
+    const cmd = launch.command;
 
     // Speed/robustness for ACP:
     // - themes are irrelevant in rpc mode and can be noisy/slow to load.
     // Keep extensions + prompt templates enabled because ACP users may rely on them
     // (e.g. MCP extensions, prompt templates for workflows).
     const args = [
+      ...launch.args,
       "--mode",
       "rpc",
       "--no-themes",
@@ -295,7 +296,7 @@ export class PiRpcProcess {
     const child = spawn(cmd, args, {
       cwd: params.cwd,
       env: process.env,
-      shell: shouldUseShellForPiCommand(cmd),
+      shell: launch.shell,
       stdio: "pipe",
     });
 
@@ -309,7 +310,7 @@ export class PiRpcProcess {
         typeof errorRecord?.code === "string" ? errorRecord.code : undefined;
       if (code === "ENOENT") {
         throw new PiRpcSpawnError(
-          `Could not start pi: executable not found (command: ${cmd}). Pi needs to be installed before it can run in ACP clients. Install it via \`npm install -g @earendil-works/pi-coding-agent\` or ensure \`pi\` is on your PATH. Then try again.`,
+          `Could not start pi: executable not found (command: ${cmd}). ${params.piCommand === undefined ? "Reinstall magpi-acp to restore its packaged Pi." : "Check MAGPI_ACP_PI_COMMAND or install the requested Pi executable."}`,
           { cause: error, code }
         );
       }

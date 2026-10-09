@@ -1,6 +1,6 @@
 {
   "name": "magpi-acp",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Pi ACP runtime adapter for Mischief",
   "keywords": [
     "acp",
@@ -23,7 +23,8 @@
     "magpi-acp": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "main": "dist/index.js",
@@ -47,6 +48,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
@@ -60,6 +62,6 @@
     "ultracite": "^7.12.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   }
 }

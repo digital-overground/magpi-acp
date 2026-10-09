@@ -14,7 +14,8 @@ void test("getAuthMethods: includes integrated terminal-auth metadata when enabl
 
   assert.equal(method.id, PI_SETUP_METHOD_ID);
   assert.ok(typeof terminalAuth.command === "string");
-  assert.deepEqual(terminalAuth.args, ["--terminal-login"]);
+  assert.equal(terminalAuth.command, process.execPath);
+  assert.deepEqual(terminalAuth.args, [process.argv[1], "--terminal-login"]);
   assert.equal(terminalAuth.label, "Launch pi");
 });
 
