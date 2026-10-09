@@ -2,6 +2,8 @@
 
 An [Agent Client Protocol](https://agentclientprotocol.com) adapter for the [Pi coding agent](https://github.com/earendil-works/pi-mono).
 
+[Release notes](https://github.com/digital-overground/magpi-acp/blob/main/CHANGELOG.md)
+
 ```text
 ACP client → MagPi ACP → Pi RPC → selected model
 ```

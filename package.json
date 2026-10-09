@@ -1,6 +1,6 @@
 {
   "name": "magpi-acp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Pi ACP runtime adapter for Mischief",
   "keywords": [
     "acp",
@@ -23,7 +23,8 @@
     "magpi-acp": "dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "type": "module",
   "main": "dist/index.js",
