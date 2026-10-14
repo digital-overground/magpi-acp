@@ -156,7 +156,7 @@ void test("MagPiAcpAgent: quietStartup=true disables startup info generation/emi
     assert.equal("_meta" in result, false);
 
     if (typeof startupInfo === "string") {
-      assert.match(startupInfo, /New version available/u);
+      assert.match(startupInfo, /A newer Pi version is available/u);
     }
     assert.equal(timeouts.length, 2);
   } finally {

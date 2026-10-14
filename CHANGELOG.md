@@ -1,6 +1,8 @@
 # Changelog
 
-Notable changes to MagPi ACP are documented here.
+## [0.3.1] - 2026-10-14
+
+- ask_user no longer asks for a follow up comment
 
 ## [0.3.0] - 2026-10-09
 
