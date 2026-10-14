@@ -3,7 +3,7 @@ interface AskOption {
   description?: string;
 }
 type AskResponse =
-  | { kind: "selection"; selections: string[]; comment?: string }
+  | { kind: "selection"; selections: string[] }
   | { kind: "freeform"; text: string };
 interface AskParams {
   question: string;
@@ -78,7 +78,7 @@ const result = (params: AskParams, response: AskResponse | null): AskResult => {
   if (response?.kind === "freeform") {
     answer = response.text;
   } else if (response?.kind === "selection") {
-    answer = `${response.selections.join(", ")}${response.comment === undefined ? "" : ` — ${response.comment}`}`;
+    answer = response.selections.join(", ");
   }
   return {
     content: [
@@ -95,19 +95,6 @@ const result = (params: AskParams, response: AskResponse | null): AskResult => {
       response,
     },
   };
-};
-
-const commentFor = async (
-  context: AskContext,
-  prompt: string,
-  dialogOptions: DialogOptions | undefined
-): Promise<string | undefined> => {
-  const answer = await context.ui.input(
-    prompt,
-    "Optional comment (press Enter to skip)...",
-    dialogOptions
-  );
-  return trimmed(answer);
 };
 
 const askFreeform = async (
@@ -150,9 +137,7 @@ const askMultiple = async (
     return result(params, null);
   }
 
-  const comment = await commentFor(context, prompt, dialogOptions);
   return result(params, {
-    ...(comment === undefined ? {} : { comment }),
     kind: "selection",
     selections,
   });
@@ -177,9 +162,7 @@ const askSingle = async (
     return await askFreeform(params, context, prompt, dialogOptions);
   }
 
-  const comment = await commentFor(context, prompt, dialogOptions);
   return result(params, {
-    ...(comment === undefined ? {} : { comment }),
     kind: "selection",
     selections: [selected],
   });
