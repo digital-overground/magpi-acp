@@ -554,21 +554,6 @@ export const generateThreadTitle = async (params: {
   }
 };
 
-const isSemver = (version: string): boolean =>
-  /^\d+\.\d+\.\d+(?:[-+].+)?$/u.test(version);
-
-const compareSemver = (first: string, second: string): number => {
-  const firstParts = first.split(/[.-]/u).slice(0, 3).map(Number);
-  const secondParts = second.split(/[.-]/u).slice(0, 3).map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    const difference = (firstParts[index] ?? 0) - (secondParts[index] ?? 0);
-    if (difference !== 0) {
-      return difference > 0 ? 1 : -1;
-    }
-  }
-  return 0;
-};
-
 const installedPiVersion = (): string => {
   const launch = resolvePiLaunch(process.env.MAGPI_ACP_PI_COMMAND);
   const result = spawnSync(launch.command, [...launch.args, "--version"], {
@@ -580,35 +565,7 @@ const installedPiVersion = (): string => {
   return (stdout.length > 0 ? stdout : stderr).replace(/^v/iu, "");
 };
 
-const buildUpdateNotice = (): string | null => {
-  if (process.env.MAGPI_ACP_PI_COMMAND !== undefined) {
-    return null;
-  }
-  try {
-    const installed = installedPiVersion();
-    if (installed.length === 0 || !isSemver(installed)) {
-      return null;
-    }
-    const latestResult = spawnSync(
-      "npm",
-      ["view", "@earendil-works/pi-coding-agent", "version"],
-      { encoding: "utf-8", timeout: 800 }
-    );
-    const latest = (latestResult.stdout ?? "").trim().replace(/^v/iu, "");
-    if (
-      latest.length === 0 ||
-      !isSemver(latest) ||
-      compareSemver(latest, installed) <= 0
-    ) {
-      return null;
-    }
-    return `A newer Pi version is available (v${latest}; MagPi includes v${installed}). Update magpi-acp when a release includes it.`;
-  } catch {
-    return null;
-  }
-};
-
-const buildStartupInfo = (options: { updateNotice: string | null }): string => {
+const buildStartupInfo = (): string => {
   let piVersionText = "pi";
   try {
     const installed = installedPiVersion();
@@ -623,9 +580,6 @@ const buildStartupInfo = (options: { updateNotice: string | null }): string => {
     piVersionText,
     "collect shiny things",
   ];
-  if (options.updateNotice !== null && options.updateNotice.length > 0) {
-    lines.push("", "---", options.updateNotice);
-  }
   return `${lines.join("\n").trim()}\n`;
 };
 
@@ -1627,18 +1581,7 @@ export class MagPiAcpAgent implements ACPAgent {
       }
     );
 
-    const quietStartup = getQuietStartup(params.cwd);
-    const updateNotice = buildUpdateNotice();
-
-    // If quietStartup is enabled, suppress the full "startup info" prelude, but still surface
-    // the "New version available" notice (if any) since it's high-signal and actionable.
-    let preludeText = buildStartupInfo({ updateNotice });
-    if (quietStartup) {
-      preludeText =
-        updateNotice === null || updateNotice.length === 0
-          ? ""
-          : `${updateNotice}\n`;
-    }
+    const preludeText = getQuietStartup(params.cwd) ? "" : buildStartupInfo();
 
     if (preludeText.length > 0) {
       session.setStartupInfo(preludeText);

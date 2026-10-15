@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.2] - 2026-10-15
+
+- support pi v1.2.0
+
 ## [0.3.1] - 2026-10-14
 
 - ask_user no longer asks for a follow up comment

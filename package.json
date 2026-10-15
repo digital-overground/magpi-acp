@@ -1,6 +1,6 @@
 {
   "name": "magpi-acp",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Pi ACP runtime adapter for Mischief",
   "keywords": [
     "acp",
@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.4.0",
-    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
